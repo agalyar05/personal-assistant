@@ -12,6 +12,12 @@ import {
 import { AssignmentSheet } from "@/components/AssignmentSheet";
 import { CelebrationBurst } from "@/components/CelebrationBurst";
 import { dueDateParts, formatDueDate } from "@/lib/fill";
+import {
+  kanbanBoardClass,
+  kanbanBoardStyle,
+  kanbanColumnBodyClass,
+  kanbanColumnClass,
+} from "@/lib/kanban-layout";
 
 type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
@@ -124,31 +130,31 @@ export default function AssignmentsPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <CelebrationBurst
         open={celebrate}
         onDone={() => setCelebrate(false)}
         label="Submitted! 🎉"
       />
-      <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h2 className="display text-2xl">Assignments</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Manage coursework here. Classes live under{" "}
+      <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="display text-xl leading-tight">Assignments</h2>
+            <p className="mt-0.5 hidden text-xs text-[var(--muted)] sm:block">
+              Classes in{" "}
               <a href="/admin/groups" className="text-[var(--accent)] underline">
                 Groups
               </a>
               . Text <code className="text-[var(--ink)]">due today</code>.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {views.map(([id, label]) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => setView(id)}
-                className={`rounded-full px-3 py-1.5 text-sm ${
+                className={`rounded-full px-2.5 py-1 text-xs sm:text-sm ${
                   view === id
                     ? "bg-[var(--accent)] text-white"
                     : "border border-[var(--line)] bg-white/80"
@@ -159,7 +165,7 @@ export default function AssignmentsPage() {
             ))}
           </div>
         </div>
-        {msg && <p className="mt-3 text-sm text-[var(--accent)]">{msg}</p>}
+        {msg && <p className="mt-2 text-sm text-[var(--accent)]">{msg}</p>}
       </section>
 
       {view === "sheet" && (
@@ -193,7 +199,13 @@ export default function AssignmentsPage() {
           setMonth={setMonth}
           assignments={assignments}
           courseMap={courseMap}
-          onMoveDay={(id, dueAt) => void patchAssignment({ id, dueAt })}
+          onMoveDay={(ids, dueAt) => {
+            void (async () => {
+              await Promise.all(
+                ids.map((id) => patchAssignment({ id, dueAt })),
+              );
+            })();
+          }}
         />
       )}
 
@@ -207,23 +219,22 @@ export default function AssignmentsPage() {
           courses={courses}
           kanbanBy={kanbanBy}
           setKanbanBy={setKanbanBy}
-          onDropCard={(id, columnId) => {
-            if (kanbanBy === "status") {
-              void patchAssignment({
-                id,
-                status: columnId as AssignmentStatus,
-              });
-            } else if (kanbanBy === "difficulty") {
-              void patchAssignment({
-                id,
-                difficulty: columnId as Assignment["difficulty"],
-              });
-            } else {
-              void patchAssignment({
-                id,
-                courseId: columnId === "none" ? null : columnId,
-              });
-            }
+          onDropCards={(ids, columnId) => {
+            void (async () => {
+              const patch =
+                kanbanBy === "status"
+                  ? { status: columnId as AssignmentStatus }
+                  : kanbanBy === "difficulty"
+                    ? {
+                        difficulty: columnId as Assignment["difficulty"],
+                      }
+                    : {
+                        courseId: columnId === "none" ? null : columnId,
+                      };
+              await Promise.all(
+                ids.map((id) => patchAssignment({ id, ...patch })),
+              );
+            })();
           }}
         />
       )}
@@ -436,7 +447,7 @@ function CalendarView({
   setMonth: (d: Date) => void;
   assignments: Assignment[];
   courseMap: Map<string, Course>;
-  onMoveDay: (id: string, dueAt: string) => void;
+  onMoveDay: (ids: string[], dueAt: string) => void;
 }) {
   const year = month.getFullYear();
   const mo = month.getMonth();
@@ -448,8 +459,18 @@ function CalendarView({
   ];
   while (cells.length % 7) cells.push(null);
 
-  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragIds, setDragIds] = useState<string[]>([]);
   const [overDay, setOverDay] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lastSelected, setLastSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setSelected(new Set());
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function itemsForDay(day: number) {
     return assignments.filter((a) => {
@@ -463,6 +484,41 @@ function CalendarView({
     const m = String(mo + 1).padStart(2, "0");
     const d = String(day).padStart(2, "0");
     return `${year}-${m}-${d}`;
+  }
+
+  function selectCard(
+    id: string,
+    dayItems: Assignment[],
+    e: React.MouseEvent,
+  ) {
+    e.stopPropagation();
+    const ids = dayItems.map((a) => a.id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (e.shiftKey && lastSelected && ids.includes(lastSelected)) {
+        const a = ids.indexOf(lastSelected);
+        const b = ids.indexOf(id);
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        for (let i = lo; i <= hi; i++) next.add(ids[i]!);
+      } else if (e.metaKey || e.ctrlKey) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+      } else if (next.has(id) && next.size > 1) {
+        // keep multi-select so drag can move the group
+      } else {
+        next.clear();
+        next.add(id);
+      }
+      return next;
+    });
+    setLastSelected(id);
+  }
+
+  function idsToMove(primary: string): string[] {
+    if (selected.has(primary) && selected.size > 0) {
+      return Array.from(selected);
+    }
+    return [primary];
   }
 
   return (
@@ -487,7 +543,20 @@ function CalendarView({
         </button>
       </div>
       <p className="mb-3 text-center text-xs text-[var(--muted)]">
-        Drag assignments onto another day to reschedule
+        Click to select · ⌘/Ctrl+click multi · Shift+click range · drag onto a
+        day
+        {selected.size > 0 && (
+          <>
+            {" · "}
+            <button
+              type="button"
+              className="underline"
+              onClick={() => setSelected(new Set())}
+            >
+              clear {selected.size} selected
+            </button>
+          </>
+        )}
       </p>
       <div className="grid grid-cols-7 gap-px text-center text-xs text-[var(--muted)]">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
@@ -509,10 +578,22 @@ function CalendarView({
             onDrop={(e) => {
               e.preventDefault();
               if (!day) return;
-              const id = e.dataTransfer.getData("text/assignment-id") || dragId;
-              if (id) onMoveDay(id, dateForDay(day));
-              setDragId(null);
+              let ids: string[] = [];
+              try {
+                const raw = e.dataTransfer.getData("text/assignment-ids");
+                if (raw) ids = JSON.parse(raw) as string[];
+              } catch {
+                /* ignore */
+              }
+              if (!ids.length) {
+                const one =
+                  e.dataTransfer.getData("text/assignment-id") || dragIds[0];
+                if (one) ids = [one];
+              }
+              if (ids.length) onMoveDay(ids, dateForDay(day));
+              setDragIds([]);
               setOverDay(null);
+              setSelected(new Set());
             }}
             className={`min-h-[7.5rem] p-2 text-left sm:min-h-[9rem] ${
               overDay === day
@@ -528,26 +609,37 @@ function CalendarView({
                 <div className="mt-1 space-y-1">
                   {itemsForDay(day).map((a) => {
                     const c = a.courseId ? courseMap.get(a.courseId) : null;
+                    const isSel = selected.has(a.id);
+                    const isDragging = dragIds.includes(a.id);
                     return (
                       <div
                         key={a.id}
                         draggable
+                        onClick={(e) => selectCard(a.id, itemsForDay(day), e)}
                         onDragStart={(e) => {
-                          setDragId(a.id);
+                          const ids = idsToMove(a.id);
+                          setDragIds(ids);
+                          e.dataTransfer.setData(
+                            "text/assignment-ids",
+                            JSON.stringify(ids),
+                          );
                           e.dataTransfer.setData("text/assignment-id", a.id);
                           e.dataTransfer.effectAllowed = "move";
                         }}
                         onDragEnd={() => {
-                          setDragId(null);
+                          setDragIds([]);
                           setOverDay(null);
                         }}
                         className={`cursor-grab truncate rounded px-1.5 py-1 text-[11px] text-white active:cursor-grabbing ${
-                          dragId === a.id ? "opacity-40" : ""
-                        }`}
+                          isDragging ? "opacity-40" : ""
+                        } ${isSel ? "ring-2 ring-white ring-offset-1 ring-offset-black/20" : ""}`}
                         style={{ background: c?.color || "var(--accent)" }}
-                        title={`${a.title} — drag to another day`}
+                        title={`${a.title}${isSel && selected.size > 1 ? ` (+${selected.size - 1} more)` : ""}`}
                       >
                         {a.title}
+                        {isSel && selected.size > 1 && dragIds[0] === a.id
+                          ? ` · ${selected.size}`
+                          : ""}
                       </div>
                     );
                   })}
@@ -566,16 +658,31 @@ function KanbanView({
   courses,
   kanbanBy,
   setKanbanBy,
-  onDropCard,
+  onDropCards,
 }: {
   assignments: Assignment[];
   courses: Course[];
   kanbanBy: KanbanBy;
   setKanbanBy: (v: KanbanBy) => void;
-  onDropCard: (id: string, columnId: string) => void;
+  onDropCards: (ids: string[], columnId: string) => void;
 }) {
-  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lastSelected, setLastSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setSelected(new Set());
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    setSelected(new Set());
+    setLastSelected(null);
+  }, [kanbanBy]);
 
   const columns = useMemo(() => {
     if (kanbanBy === "status") {
@@ -607,6 +714,41 @@ function KanbanView({
     return cols;
   }, [assignments, courses, kanbanBy]);
 
+  function selectCard(
+    id: string,
+    columnItems: Assignment[],
+    e: React.MouseEvent,
+  ) {
+    e.stopPropagation();
+    const ids = columnItems.map((a) => a.id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (e.shiftKey && lastSelected && ids.includes(lastSelected)) {
+        const a = ids.indexOf(lastSelected);
+        const b = ids.indexOf(id);
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        for (let i = lo; i <= hi; i++) next.add(ids[i]!);
+      } else if (e.metaKey || e.ctrlKey) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+      } else if (next.has(id) && next.size > 1) {
+        // keep group for drag
+      } else {
+        next.clear();
+        next.add(id);
+      }
+      return next;
+    });
+    setLastSelected(id);
+  }
+
+  function idsToMove(primary: string): string[] {
+    if (selected.has(primary) && selected.size > 0) {
+      return Array.from(selected);
+    }
+    return [primary];
+  }
+
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap gap-2">
@@ -631,10 +773,22 @@ function KanbanView({
           </button>
         ))}
         <span className="self-center text-xs text-[var(--muted)]">
-          Drag cards between columns to update the sheet
+          Click · ⌘/Ctrl+click · Shift+click, then drag the group
+          {selected.size > 0 && (
+            <>
+              {" · "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => setSelected(new Set())}
+              >
+                clear {selected.size}
+              </button>
+            </>
+          )}
         </span>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <div className={kanbanBoardClass} style={kanbanBoardStyle(columns.length)}>
         {columns.map((col) => (
           <div
             key={col.id}
@@ -645,53 +799,88 @@ function KanbanView({
             onDragLeave={() => setOverCol((c) => (c === col.id ? null : c))}
             onDrop={(e) => {
               e.preventDefault();
-              const id = e.dataTransfer.getData("text/assignment-id") || dragId;
-              if (id) onDropCard(id, col.id);
-              setDragId(null);
+              let ids: string[] = [];
+              try {
+                const raw = e.dataTransfer.getData("text/assignment-ids");
+                if (raw) ids = JSON.parse(raw) as string[];
+              } catch {
+                /* ignore */
+              }
+              if (!ids.length) {
+                const one =
+                  e.dataTransfer.getData("text/assignment-id") || dragIds[0];
+                if (one) ids = [one];
+              }
+              if (ids.length) onDropCards(ids, col.id);
+              setDragIds([]);
               setOverCol(null);
+              setSelected(new Set());
             }}
-            className={`w-72 shrink-0 rounded-2xl border bg-[var(--card)] p-3 ${
+            className={`${kanbanColumnClass} bg-[var(--card)] ${
               overCol === col.id
                 ? "border-[var(--accent)] bg-[var(--accent-soft)]/40"
                 : "border-[var(--line)]"
             }`}
           >
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-medium sm:text-sm">
               {"color" in col && col.color && (
                 <span
-                  className="h-2.5 w-2.5 rounded-full"
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ background: String(col.color) }}
                 />
               )}
-              {col.label}
+              <span className="min-w-0 truncate">{col.label}</span>
               <span className="text-[var(--muted)]">({col.items.length})</span>
             </div>
-            <div className="min-h-24 space-y-2">
-              {col.items.map((a) => (
-                <div
-                  key={a.id}
-                  draggable
-                  onDragStart={(e) => {
-                    setDragId(a.id);
-                    e.dataTransfer.setData("text/assignment-id", a.id);
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                  onDragEnd={() => {
-                    setDragId(null);
-                    setOverCol(null);
-                  }}
-                  className={`cursor-grab rounded-xl border border-[var(--line)] bg-white/90 p-3 active:cursor-grabbing ${
-                    isSubmittedStyle(a.status)
-                      ? "bg-stone-100 text-[var(--muted)] line-through opacity-70"
-                      : ""
-                  } ${dragId === a.id ? "opacity-50" : ""}`}
-                >
-                  <div className="text-sm font-medium">{a.title}</div>
-                  <div className="mt-1 text-xs text-[var(--muted)] no-underline">
-                    {a.dueAt ? formatDueDate(a.dueAt) : "No due date"}
+            <div className={kanbanColumnBodyClass}>
+              {col.items.map((a) => {
+                const isSel = selected.has(a.id);
+                const isDragging = dragIds.includes(a.id);
+                return (
+                  <div
+                    key={a.id}
+                    draggable
+                    onClick={(e) => selectCard(a.id, col.items, e)}
+                    onDragStart={(e) => {
+                      const ids = idsToMove(a.id);
+                      setDragIds(ids);
+                      e.dataTransfer.setData(
+                        "text/assignment-ids",
+                        JSON.stringify(ids),
+                      );
+                      e.dataTransfer.setData("text/assignment-id", a.id);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => {
+                      setDragIds([]);
+                      setOverCol(null);
+                    }}
+                    className={`cursor-grab rounded-lg border px-2 py-2 active:cursor-grabbing sm:rounded-xl sm:px-3 sm:py-2.5 ${
+                      isSel
+                        ? "border-[var(--accent)] bg-[var(--accent-soft)]/60 ring-2 ring-[var(--accent)]"
+                        : "border-[var(--line)] bg-white/90"
+                    } ${
+                      isSubmittedStyle(a.status)
+                        ? "bg-stone-100 text-[var(--muted)] line-through opacity-70"
+                        : ""
+                    } ${isDragging ? "opacity-50" : ""}`}
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <div className="text-xs font-medium leading-snug sm:text-sm">
+                        {a.title}
+                      </div>
+                      {isSel && selected.size > 1 && (
+                        <span className="shrink-0 text-[10px] text-[var(--accent)]">
+                          {selected.size}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-[var(--muted)] no-underline sm:text-xs">
+                      {a.dueAt ? formatDueDate(a.dueAt) : "No due date"}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {!col.items.length && (
                 <p className="py-6 text-center text-xs text-[var(--muted)]">
                   Drop here

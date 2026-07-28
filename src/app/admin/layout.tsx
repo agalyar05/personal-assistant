@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useUiTheme } from "@/components/ThemePicker";
 
 const NAV = [
@@ -19,26 +20,37 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   useUiTheme();
+  const pathname = usePathname();
 
   return (
-    <div className="mx-auto min-h-screen max-w-7xl px-5 py-8">
-      <header className="mb-8 flex flex-wrap items-end justify-between gap-4 border-b border-[var(--line)] pb-5">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
-            SMS assistant
-          </p>
-          <h1 className="display text-3xl">Dashboard</h1>
+    <div className="mx-auto min-h-screen w-full max-w-[100rem] px-3 py-3 sm:px-5 sm:py-4">
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] pb-2.5">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h1 className="display text-xl leading-none sm:text-2xl">Dashboard</h1>
+          <span className="hidden text-[10px] uppercase tracking-[0.18em] text-[var(--muted)] sm:inline">
+            SMS
+          </span>
         </div>
-        <nav className="flex flex-wrap gap-2">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-full border border-[var(--line)] bg-white/70 px-3 py-1.5 text-sm hover:bg-[var(--accent-soft)]"
-            >
-              {item.label}
-            </Link>
-          ))}
+        <nav className="flex flex-wrap gap-1">
+          {NAV.map((item) => {
+            const active =
+              item.href === "/admin"
+                ? pathname === "/admin"
+                : pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`rounded-full px-2.5 py-1 text-xs sm:text-sm ${
+                  active
+                    ? "bg-[var(--accent)] text-white"
+                    : "border border-[var(--line)] bg-white/70 hover:bg-[var(--accent-soft)]"
+                }`}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
       </header>
       {children}
