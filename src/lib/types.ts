@@ -139,6 +139,39 @@ export type Reminder = {
   createdAt: string;
 };
 
+export type ApplicationKind =
+  | "scholarship"
+  | "job"
+  | "internship"
+  | "program"
+  | "grant"
+  | "other";
+
+export type ApplicationStatus =
+  | "idea"
+  | "researching"
+  | "in_progress"
+  | "submitted"
+  | "interview"
+  | "accepted"
+  | "rejected"
+  | "withdrawn";
+
+export type Application = {
+  id: string;
+  title: string;
+  kind: ApplicationKind;
+  status: ApplicationStatus;
+  url: string;
+  description: string;
+  deadline: string | null;
+  remindAt: string | null;
+  reminderId: string | null;
+  notes: string;
+  sortOrder: number;
+  createdAt: string;
+};
+
 export type ProcessedMessage = {
   gmailMessageId: string;
   threadId: string;
@@ -152,6 +185,7 @@ export type Store = {
   processedMessages: ProcessedMessage[];
   courses: Course[];
   assignments: Assignment[];
+  applications: Application[];
 };
 
 export const DEFAULT_THEME_CUSTOM: ThemeColors = {
@@ -211,6 +245,7 @@ export const DEFAULT_STORE: Store = {
   processedMessages: [],
   courses: [],
   assignments: [],
+  applications: [],
 };
 
 export const ASSIGNMENT_STATUSES: AssignmentStatus[] = [
@@ -243,3 +278,5 @@ export const ASSIGNMENT_DIFFICULTIES: AssignmentDifficulty[] = [
   "medium",
   "hard",
 ];
+
+// Application labels live in application-meta.ts

@@ -5,17 +5,51 @@ import type { ThemeColors, ThemeId, UiThemeSettings } from "@/lib/types";
 import { DEFAULT_THEME_CUSTOM } from "@/lib/types";
 import { THEME_PRESETS, resolveThemeColors, themeToCssVars } from "@/lib/themes";
 
+const THEME_CACHE_KEY = "pa_ui_theme_v1";
+
+function readCachedTheme(): UiThemeSettings | null {
+  try {
+    const raw = localStorage.getItem(THEME_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as UiThemeSettings;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedTheme(theme: UiThemeSettings) {
+  try {
+    localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(theme));
+  } catch {
+    /* ignore quota */
+  }
+}
+
 export function useUiTheme() {
-  const [theme, setTheme] = useState<UiThemeSettings>({
-    id: "harbor",
-    custom: { ...DEFAULT_THEME_CUSTOM },
+  const [theme, setTheme] = useState<UiThemeSettings>(() => {
+    if (typeof window === "undefined") {
+      return { id: "harbor", custom: { ...DEFAULT_THEME_CUSTOM } };
+    }
+    return (
+      readCachedTheme() || {
+        id: "harbor",
+        custom: { ...DEFAULT_THEME_CUSTOM },
+      }
+    );
   });
 
   useEffect(() => {
-    fetch("/api/settings")
+    const cached = readCachedTheme();
+    if (cached) setTheme(cached);
+
+    // Slim settings fetch — theme only, not full dashboard blob
+    fetch("/api/settings?slim=1")
       .then((r) => r.json())
       .then((j) => {
-        if (j.settings?.uiTheme) setTheme(j.settings.uiTheme);
+        if (j.settings?.uiTheme) {
+          setTheme(j.settings.uiTheme);
+          writeCachedTheme(j.settings.uiTheme);
+        }
       })
       .catch(() => undefined);
   }, []);
@@ -32,6 +66,7 @@ export function useUiTheme() {
 
   async function saveTheme(next: UiThemeSettings) {
     setTheme(next);
+    writeCachedTheme(next);
     await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -85,19 +120,16 @@ export function ThemePicker({
           {(
             [
               ["bg", "Background"],
-              ["ink", "Text"],
+              ["ink", "Ink"],
               ["accent", "Accent"],
               ["card", "Card"],
-              ["muted", "Muted"],
-              ["accentSoft", "Accent soft"],
-              ["line", "Line"],
             ] as [keyof ThemeColors, string][]
           ).map(([key, label]) => (
             <label key={key} className="text-xs text-[var(--muted)]">
               {label}
               <input
                 type="color"
-                className="mt-1 h-9 w-full cursor-pointer rounded border border-[var(--line)] bg-white"
+                className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-[var(--line)] bg-white"
                 value={theme.custom[key]}
                 onChange={(e) =>
                   onChange({

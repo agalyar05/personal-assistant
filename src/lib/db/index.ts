@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
   AppSettings,
+  Application,
+  ApplicationKind,
+  ApplicationStatus,
   Assignment,
   AssignmentDifficulty,
   AssignmentStatus,
@@ -363,6 +366,12 @@ export async function deleteRemindersMatching(search: string): Promise<number> {
   return hits.length;
 }
 
+export async function deleteReminder(id: string): Promise<void> {
+  if (!hasSupabase()) return local.deleteReminder(id);
+  const sb = client();
+  await sb.from("reminders").delete().eq("id", id);
+}
+
 export async function wasProcessed(gmailMessageId: string): Promise<boolean> {
   if (!hasSupabase()) return local.wasProcessed(gmailMessageId);
   const sb = client();
@@ -396,6 +405,7 @@ export async function getFullStore(): Promise<Store> {
     processedMessages: [],
     courses: await getCourses(),
     assignments: await getAssignments(),
+    applications: await getApplications(),
   };
 }
 
@@ -599,4 +609,95 @@ export async function bulkUpsertAssignments(
   const out: Assignment[] = [];
   for (const row of rows) out.push(await upsertAssignment(row));
   return out;
+}
+
+// --- Applications ---
+
+function rowToApplication(row: Record<string, unknown>): Application {
+  return {
+    id: String(row.id),
+    title: String(row.title),
+    kind: String(row.kind || "scholarship") as ApplicationKind,
+    status: String(row.status || "idea") as ApplicationStatus,
+    url: String(row.url || ""),
+    description: String(row.description || ""),
+    deadline: row.deadline ? String(row.deadline) : null,
+    remindAt: row.remind_at ? String(row.remind_at) : null,
+    reminderId: row.reminder_id ? String(row.reminder_id) : null,
+    notes: String(row.notes || ""),
+    sortOrder: Number(row.sort_order || 0),
+    createdAt: String(row.created_at || new Date().toISOString()),
+  };
+}
+
+export async function getApplications(): Promise<Application[]> {
+  if (!hasSupabase()) return local.getApplications();
+  const sb = client();
+  const { data } = await sb.from("applications").select("*").order("sort_order");
+  return (data || [])
+    .map((r) => rowToApplication(r as Record<string, unknown>))
+    .sort((a, b) => {
+      const ad = a.deadline || "9999";
+      const bd = b.deadline || "9999";
+      if (ad !== bd) return ad.localeCompare(bd);
+      return a.sortOrder - b.sortOrder;
+    });
+}
+
+export async function upsertApplication(
+  input: Partial<Application> & { title: string },
+): Promise<Application> {
+  if (!hasSupabase()) return local.upsertApplication(input);
+  const sb = client();
+  if (input.id) {
+    const body: Record<string, unknown> = { title: input.title };
+    if (input.kind !== undefined) body.kind = input.kind;
+    if (input.status !== undefined) body.status = input.status;
+    if (input.url !== undefined) body.url = input.url;
+    if (input.description !== undefined) body.description = input.description;
+    if (input.deadline !== undefined) body.deadline = input.deadline;
+    if (input.remindAt !== undefined) body.remind_at = input.remindAt;
+    if (input.reminderId !== undefined) body.reminder_id = input.reminderId;
+    if (input.notes !== undefined) body.notes = input.notes;
+    if (input.sortOrder !== undefined) body.sort_order = input.sortOrder;
+    const { data, error } = await sb
+      .from("applications")
+      .update(body)
+      .eq("id", input.id)
+      .select("*")
+      .single();
+    if (error || !data) throw new Error(error?.message || "Failed to update application");
+    return rowToApplication(data as Record<string, unknown>);
+  }
+  const { data, error } = await sb
+    .from("applications")
+    .insert({
+      title: input.title,
+      kind: input.kind ?? "scholarship",
+      status: input.status ?? "idea",
+      url: input.url ?? "",
+      description: input.description ?? "",
+      deadline: input.deadline ?? null,
+      remind_at: input.remindAt ?? null,
+      reminder_id: input.reminderId ?? null,
+      notes: input.notes ?? "",
+      sort_order: input.sortOrder ?? 0,
+    })
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message || "Failed to save application");
+  return rowToApplication(data as Record<string, unknown>);
+}
+
+export async function deleteApplication(id: string): Promise<void> {
+  if (!hasSupabase()) return local.deleteApplication(id);
+  const sb = client();
+  const { data } = await sb
+    .from("applications")
+    .select("reminder_id")
+    .eq("id", id)
+    .maybeSingle();
+  const reminderId = data?.reminder_id ? String(data.reminder_id) : null;
+  await sb.from("applications").delete().eq("id", id);
+  if (reminderId) await deleteReminder(reminderId);
 }

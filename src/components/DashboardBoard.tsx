@@ -19,15 +19,40 @@ import type {
   ListItem,
 } from "@/lib/types";
 
+const LAYOUT_CACHE = "pa_dashboard_layout_v1";
+
+function readLayoutCache(): DashboardLayout | null {
+  try {
+    const raw = localStorage.getItem(LAYOUT_CACHE);
+    if (!raw) return null;
+    return normalizeDashboardLayout(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function writeLayoutCache(layout: DashboardLayout) {
+  try {
+    localStorage.setItem(LAYOUT_CACHE, JSON.stringify(layout));
+  } catch {
+    /* quota — often from huge images; ignore */
+  }
+}
+
 type Bootstrap = {
   provider: string;
-  settings: AppSettings;
+  settings: Partial<AppSettings> & {
+    timezone: string;
+    cronControl: AppSettings["cronControl"];
+    morningBriefingTime: string;
+    dashboardLayout?: DashboardLayout;
+  };
   lists: Record<string, number>;
   reminderCount: number;
   courses: Course[];
   dueSoon: Assignment[];
   todos: ListItem[];
-  assignments: Assignment[];
+  assignments: Pick<Assignment, "id" | "courseId" | "status">[];
 };
 
 function greeting(): string {
@@ -57,7 +82,10 @@ function formatDue(iso: string | null): string {
 
 export function DashboardBoard() {
   const [data, setData] = useState<Bootstrap | null>(null);
-  const [layout, setLayout] = useState<DashboardLayout>(defaultDashboardLayout());
+  const [layout, setLayout] = useState<DashboardLayout>(() => {
+    if (typeof window === "undefined") return defaultDashboardLayout();
+    return readLayoutCache() || defaultDashboardLayout();
+  });
   const [editing, setEditing] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -67,13 +95,16 @@ export function DashboardBoard() {
   const saveTimer = useRef<number | null>(null);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const savingRef = useRef(false);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/admin/bootstrap");
     if (!res.ok) return;
     const json = (await res.json()) as Bootstrap;
     setData(json);
-    setLayout(normalizeDashboardLayout(json.settings?.dashboardLayout));
+    const remote = normalizeDashboardLayout(json.settings?.dashboardLayout);
+    setLayout(remote);
+    writeLayoutCache(remote);
   }, []);
 
   useEffect(() => {
@@ -84,30 +115,44 @@ export function DashboardBoard() {
   }, [load]);
 
   async function saveNow(next: DashboardLayout) {
+    if (savingRef.current) {
+      // coalesce: schedule another save after current finishes
+      saveTimer.current = window.setTimeout(() => void saveNow(layoutRef.current), 400);
+      return;
+    }
+    savingRef.current = true;
     setSaveState("Saving…");
-    const res = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dashboardLayout: next }),
-    });
-    setSaveState(res.ok ? "Saved" : "Save failed");
-    window.setTimeout(() => setSaveState(""), 1500);
+    writeLayoutCache(next);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dashboardLayout: next }),
+      });
+      setSaveState(res.ok ? "Saved" : "Save failed");
+    } finally {
+      savingRef.current = false;
+      window.setTimeout(() => setSaveState(""), 1200);
+    }
   }
 
-  function persist(next: DashboardLayout, immediate = true) {
+  function persist(next: DashboardLayout, immediate = false) {
     setLayout(next);
+    layoutRef.current = next;
+    writeLayoutCache(next);
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     if (immediate) {
       void saveNow(next);
       return;
     }
-    saveTimer.current = window.setTimeout(() => void saveNow(next), 450);
+    // Longer debounce — typing notes was flooding Supabase
+    saveTimer.current = window.setTimeout(() => void saveNow(next), 900);
   }
 
   function updateWidget(
     id: string,
     patch: Partial<DashboardWidget>,
-    immediate = true,
+    immediate = false,
   ) {
     const widgets = layoutRef.current.widgets.map((w) =>
       w.id === id ? { ...w, ...patch } : w,
@@ -656,8 +701,10 @@ function WidgetBody({
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    if (file.size > 1_200_000) {
-                      alert("Keep images under ~1.2MB for settings storage.");
+                    if (file.size > 200_000) {
+                      alert(
+                        "Keep uploads under ~200KB, or paste an image URL instead. Big uploads slow the whole dashboard.",
+                      );
                       return;
                     }
                     const reader = new FileReader();

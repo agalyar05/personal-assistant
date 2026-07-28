@@ -3,6 +3,9 @@ import path from "path";
 import {
   DEFAULT_STORE,
   type AppSettings,
+  type Application,
+  type ApplicationKind,
+  type ApplicationStatus,
   type Assignment,
   type AssignmentDifficulty,
   type AssignmentStatus,
@@ -59,6 +62,7 @@ async function readStore(): Promise<Store> {
         ...a,
         link: a.link || "",
       })),
+      applications: parsed.applications || [],
     };
   } catch {
     return structuredClone(DEFAULT_STORE);
@@ -323,6 +327,12 @@ export async function deleteRemindersMatching(search: string): Promise<number> {
   return before - store.reminders.length;
 }
 
+export async function deleteReminder(id: string): Promise<void> {
+  const store = await readStore();
+  store.reminders = store.reminders.filter((r) => r.id !== id);
+  await writeStore(store);
+}
+
 export async function wasProcessed(gmailMessageId: string): Promise<boolean> {
   const store = await readStore();
   return store.processedMessages.some((p) => p.gmailMessageId === gmailMessageId);
@@ -454,4 +464,59 @@ export async function bulkUpsertAssignments(
   const out: Assignment[] = [];
   for (const row of rows) out.push(await upsertAssignment(row));
   return out;
+}
+
+// --- Applications ---
+
+export async function getApplications(): Promise<Application[]> {
+  const store = await readStore();
+  return [...store.applications].sort((a, b) => {
+    const ad = a.deadline || "9999";
+    const bd = b.deadline || "9999";
+    if (ad !== bd) return ad.localeCompare(bd);
+    return a.sortOrder - b.sortOrder;
+  });
+}
+
+export async function upsertApplication(
+  input: Partial<Application> & { title: string },
+): Promise<Application> {
+  const store = await readStore();
+  if (input.id) {
+    const idx = store.applications.findIndex((a) => a.id === input.id);
+    if (idx >= 0) {
+      store.applications[idx] = { ...store.applications[idx]!, ...input };
+      await writeStore(store);
+      return store.applications[idx]!;
+    }
+  }
+  const row: Application = {
+    id: input.id || uid(),
+    title: input.title,
+    kind: (input.kind as ApplicationKind) || "scholarship",
+    status: (input.status as ApplicationStatus) || "idea",
+    url: input.url || "",
+    description: input.description || "",
+    deadline: input.deadline ?? null,
+    remindAt: input.remindAt ?? null,
+    reminderId: input.reminderId ?? null,
+    notes: input.notes || "",
+    sortOrder:
+      input.sortOrder ??
+      store.applications.reduce((m, a) => Math.max(m, a.sortOrder), 0) + 1,
+    createdAt: new Date().toISOString(),
+  };
+  store.applications.push(row);
+  await writeStore(store);
+  return row;
+}
+
+export async function deleteApplication(id: string): Promise<void> {
+  const store = await readStore();
+  const app = store.applications.find((a) => a.id === id);
+  if (app?.reminderId) {
+    store.reminders = store.reminders.filter((r) => r.id !== app.reminderId);
+  }
+  store.applications = store.applications.filter((a) => a.id !== id);
+  await writeStore(store);
 }

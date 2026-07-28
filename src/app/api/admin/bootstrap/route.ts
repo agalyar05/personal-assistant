@@ -26,14 +26,27 @@ export async function GET() {
   const todos = listItems
     .filter((i) => i.listName === "todo" && !i.checked)
     .slice(0, 12);
+  // Don't ship every assignment to Home — only what widgets need
+  const progressAssignments = assignments.map((a) => ({
+    id: a.id,
+    courseId: a.courseId,
+    status: a.status,
+  }));
   return NextResponse.json({
     provider: db.dbProvider(),
-    settings,
+    settings: {
+      timezone: settings.timezone,
+      weatherCity: settings.weatherCity,
+      morningBriefingTime: settings.morningBriefingTime,
+      cronControl: settings.cronControl,
+      dashboardLayout: settings.dashboardLayout,
+      uiTheme: settings.uiTheme,
+    },
     lists: byList,
     reminderCount: reminders.length,
     courses,
     dueSoon,
     todos,
-    assignments,
+    assignments: progressAssignments,
   });
 }
