@@ -199,7 +199,8 @@ Optional: only 7:00–23:59 in America/Detroit — the app **also** gates with c
 | `done 2` / `-milk` | check off |
 | `remind me to…` | SMS reminder |
 | `quote` / `mlem` / `note: …` | shortcuts |
-| `timezone America/Chicago` | change timezone |
+| `timezone America/Chicago` | change timezone only |
+| `I'm in Seattle now` | set weather city + timezone |
 | `who is Amelia Earhart` | general knowledge |
 
 ---

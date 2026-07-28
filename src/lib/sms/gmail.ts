@@ -5,6 +5,7 @@ import {
   getPhoneDigitsFromEnv,
   getPhoneEmail,
   isFromMyPhone,
+  isGoogleVoiceAddress,
   normalizeEmailAddress,
 } from "../phone";
 
@@ -228,9 +229,12 @@ export async function sendTextReply(
 ): Promise<void> {
   const to = assertAllowedRecipient(toAddress);
   const service = gmail();
-  const subj = subject.toLowerCase().startsWith("re:")
-    ? subject
-    : `Re: ${subject}`;
+  // Empty subject delivers more reliably as SMS via Google Voice.
+  // Keep/reuse thread subjects when replying so Gmail threading stays intact.
+  let subj = subject.trim();
+  if (subj && threadId && !subj.toLowerCase().startsWith("re:")) {
+    subj = `Re: ${subj}`;
+  }
   const raw = [
     `To: ${to}`,
     `Subject: ${subj}`,
@@ -251,7 +255,54 @@ export async function sendTextReply(
   });
 }
 
-export async function sendSms(body: string, subject = "Message"): Promise<void> {
+/** Find a recent GV SMS thread so proactive texts (briefing/reminders) deliver as SMS. */
+async function findLatestVoiceThread(preferredTo?: string): Promise<{
+  threadId: string;
+  to: string;
+  subject: string;
+} | null> {
+  const service = gmail();
+  const phoneDigits = getPhoneDigitsFromEnv();
+  const res = await service.users.threads.list({
+    userId: "me",
+    q: `from:txt.voice.google.com ${phoneDigits} newer_than:30d`,
+    maxResults: 15,
+  });
+  const preferred = preferredTo
+    ? normalizeEmailAddress(preferredTo)
+    : "";
+
+  for (const t of res.data.threads || []) {
+    if (!t.id) continue;
+    const thread = await service.users.threads.get({
+      userId: "me",
+      id: t.id,
+      format: "full",
+    });
+    const messages = [...(thread.data.messages || [])].sort(
+      (a, b) => Number(b.internalDate || 0) - Number(a.internalDate || 0),
+    );
+    for (const msg of messages) {
+      const headers = headerMap(msg.payload?.headers);
+      const rawBody = decodeBody(msg.payload || {});
+      let addr = findGoogleVoiceReplyAddress(headers, rawBody);
+      if (!addr && isFromMyPhone(headers.From || "")) {
+        addr = normalizeEmailAddress(headers.From || "");
+      }
+      if (!addr) continue;
+      const to =
+        preferred && isGoogleVoiceAddress(preferred) ? preferred : addr;
+      return {
+        threadId: t.id,
+        to,
+        subject: headers.Subject || "",
+      };
+    }
+  }
+  return null;
+}
+
+export async function sendSms(body: string, _subject = "Message"): Promise<void> {
   const { getSettings, updateSettings } = await import("../db");
   const settings = await getSettings();
   let to =
@@ -270,7 +321,19 @@ export async function sendSms(body: string, subject = "Message"): Promise<void> 
       googleVoiceReply: process.env.GOOGLE_VOICE_REPLY_EMAIL.trim(),
     });
   }
-  await sendTextReply(to, subject, body);
+
+  // Prefer replying inside an existing GV thread — new emails often stay in Gmail
+  // and never become phone SMS.
+  const thread = await findLatestVoiceThread(to);
+  if (thread) {
+    await sendTextReply(thread.to, thread.subject, body, thread.threadId);
+    if (settings.googleVoiceReply !== thread.to) {
+      await updateSettings({ googleVoiceReply: thread.to });
+    }
+    return;
+  }
+
+  await sendTextReply(to, "", body);
 }
 
 export async function sendUserReply(

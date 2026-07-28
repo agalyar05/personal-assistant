@@ -11,6 +11,7 @@ export type CronControlSettings = {
 
 export type AppSettings = {
   timezone: string;
+  weatherCity: string;
   morningBriefingTime: string; // "HH:MM"
   weeklyBriefingDay: string; // "sunday"
   weeklyBriefingTime: string;
@@ -58,6 +59,7 @@ export type Store = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   timezone: "America/Detroit",
+  weatherCity: "Detroit",
   morningBriefingTime: "08:00",
   weeklyBriefingDay: "sunday",
   weeklyBriefingTime: "20:00",

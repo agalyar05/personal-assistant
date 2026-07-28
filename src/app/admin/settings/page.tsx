@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 type Settings = {
   timezone: string;
+  weatherCity: string;
   morningBriefingTime: string;
   weeklyBriefingDay: string;
   weeklyBriefingTime: string;
@@ -63,6 +64,16 @@ export default function SettingsPage() {
             />
           </label>
           <label className="text-sm">
+            Weather city
+            <input
+              className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2"
+              value={settings.weatherCity}
+              onChange={(e) =>
+                setSettings({ ...settings, weatherCity: e.target.value })
+              }
+            />
+          </label>
+          <label className="text-sm">
             Morning briefing (HH:MM)
             <input
               className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2"
@@ -82,6 +93,7 @@ export default function SettingsPage() {
           onClick={() =>
             save({
               timezone: settings.timezone,
+              weatherCity: settings.weatherCity,
               morningBriefingTime: settings.morningBriefingTime,
               cronControl: { ...cc, timezone: settings.timezone },
             })

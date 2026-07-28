@@ -13,6 +13,7 @@ export async function GET() {
 export async function PUT(req: Request) {
   const body = (await req.json()) as {
     timezone?: string;
+    weatherCity?: string;
     morningBriefingTime?: string;
     weeklyBriefingDay?: string;
     weeklyBriefingTime?: string;
@@ -33,6 +34,7 @@ export async function PUT(req: Request) {
   }
   const settings = await db.updateSettings({
     timezone: body.timezone ?? current.timezone,
+    weatherCity: body.weatherCity ?? current.weatherCity,
     morningBriefingTime:
       body.morningBriefingTime ?? current.morningBriefingTime,
     weeklyBriefingDay: body.weeklyBriefingDay ?? current.weeklyBriefingDay,

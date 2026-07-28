@@ -1,3 +1,5 @@
+import * as db from "./db";
+
 const WMO: Record<number, string> = {
   0: "clear skies",
   1: "mainly clear",
@@ -12,11 +14,10 @@ const WMO: Record<number, string> = {
 };
 const RAIN = new Set([51, 53, 55, 61, 63, 65, 80, 81, 82, 95]);
 
-async function coords(): Promise<[number, number]> {
+async function coords(city: string): Promise<[number, number]> {
   if (process.env.WEATHER_LAT && process.env.WEATHER_LON) {
     return [Number(process.env.WEATHER_LAT), Number(process.env.WEATHER_LON)];
   }
-  const city = process.env.WEATHER_CITY?.trim() || "Detroit";
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1`;
   const res = await fetch(url);
   const data = (await res.json()) as {
@@ -28,8 +29,16 @@ async function coords(): Promise<[number, number]> {
 }
 
 export async function formatWeatherText(daysAhead = 0): Promise<string> {
-  const [lat, lon] = await coords();
-  const tz = process.env.TIMEZONE || "America/Detroit";
+  const settings = await db.getSettings();
+  const city =
+    settings.weatherCity?.trim() ||
+    process.env.WEATHER_CITY?.trim() ||
+    "Detroit";
+  const tz =
+    settings.timezone?.trim() ||
+    process.env.TIMEZONE?.trim() ||
+    "America/Detroit";
+  const [lat, lon] = await coords(city);
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
@@ -52,5 +61,5 @@ export async function formatWeatherText(daysAhead = 0): Promise<string> {
   const conditions = WMO[code] || "mixed conditions";
   const umbrella = RAIN.has(code) || pop >= 50;
   const emoji = umbrella ? "☔" : "☀️";
-  return `${emoji} ${label}: ${conditions}, ${hi}°/${lo}°F${umbrella ? " — grab an umbrella" : ""}`;
+  return `${emoji} ${label} in ${city}: ${conditions}, ${hi}°/${lo}°F${umbrella ? " — grab an umbrella" : ""}`;
 }

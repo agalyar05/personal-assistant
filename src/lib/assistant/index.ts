@@ -2,6 +2,7 @@ import Groq from "groq-sdk";
 import * as db from "../db";
 import * as lists from "../lists";
 import * as reminders from "../reminders";
+import { extractLocationPhrase, resolvePlace } from "../location";
 import { formatWeatherText } from "../weather";
 import { calendar } from "../sms/gmail";
 
@@ -45,6 +46,7 @@ function findCommandLine(message: string): string | null {
       /^quote\s*$/i.test(line) ||
       /^note:?\s+/i.test(line) ||
       /^timezone\s+/i.test(line) ||
+      extractLocationPhrase(line) !== null ||
       /^done\s+/i.test(line) ||
       /^-\s*.+/.test(line) ||
       /^what'?s left on (\.\w+)\s*$/i.test(line)
@@ -97,6 +99,10 @@ export async function tryMessageShorthand(
     });
     return `got it — timezone set to ${name}`;
   }
+  const placePhrase = extractLocationPhrase(text);
+  if (placePhrase) {
+    return setLocationFromPlace(placePhrase);
+  }
   const note = text.match(/^note:?\s+(.+)$/i);
   if (note) {
     const stamp = new Date().toLocaleString("en-US", {
@@ -145,6 +151,20 @@ async function addToListReply(listName: string, items: string[]) {
   return lists.addToList(listName, items);
 }
 
+async function setLocationFromPlace(place: string): Promise<string> {
+  const resolved = await resolvePlace(place);
+  if (!resolved) {
+    return `Couldn't find "${place}" — try a city name like Seattle or Detroit.`;
+  }
+  const s = await db.getSettings();
+  await db.updateSettings({
+    weatherCity: resolved.label.split(",")[0]?.trim() || resolved.label,
+    timezone: resolved.timezone,
+    cronControl: { ...s.cronControl, timezone: resolved.timezone },
+  });
+  return `got it — you're in ${resolved.label} now (${resolved.timezone}). Weather + reminders will use that.`;
+}
+
 const SYSTEM_PROMPT = `You are a personal assistant reachable over SMS. Voice: warm fun friend — genuinely glad to see them, rooting for them, not a service rep.
 
 VOICE / TONE:
@@ -155,6 +175,7 @@ VOICE / TONE:
 - For reminders use schedule_reminder / schedule_recurring_reminder — NOT create_calendar_event.
 - Only create_calendar_event when user explicitly asks to add to Google Calendar.
 - Lists use dot prefix (.groceries, .todo). Prefer tools for calendar, weather, lists, reminders.
+- When user says they moved / are in a new city (e.g. "I'm in Seattle now"), call set_location.
 - If you cannot do something, say so simply without forced emoji.`;
 
 const TOOLS: Groq.Chat.Completions.ChatCompletionTool[] = [
@@ -297,6 +318,19 @@ const TOOLS: Groq.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "set_location",
+      description:
+        "Update weather city + timezone from a place name (Seattle, Detroit, NYC, etc.). Use when user says they are in / moved to a city.",
+      parameters: {
+        type: "object",
+        properties: { place: { type: "string" } },
+        required: ["place"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "set_morning_briefing_time",
       description: "Set morning briefing time HH:MM",
       parameters: {
@@ -397,6 +431,8 @@ async function runTool(
       });
       return `got it — timezone set to ${name}`;
     }
+    case "set_location":
+      return setLocationFromPlace(String(args.place || ""));
     case "set_morning_briefing_time": {
       const t = String(args.time_str).trim();
       await db.updateSettings({ morningBriefingTime: t });
@@ -469,7 +505,7 @@ const KNOWLEDGE_RE =
   /^(who (?:is|was|are|were)|what(?:'s| is| are| was| were)|when (?:did|was|is|are)|where (?:is|was|are|were|did)|why (?:did|is|was|are|do|does)|how (?:did|does|do|old|many|much|long)|tell me about|define|explain)\b/i;
 
 const ASSISTANT_KW =
-  /\b(calendar|remind|reminder|groceries|grocery|\.notes|\.groceries|\.todo|briefing|schedule|umbrella|weather|free at|am i free|my list|gcal|google calendar|check off|snooze|cancel reminder)\b/i;
+  /\b(calendar|remind|reminder|groceries|grocery|\.notes|\.groceries|\.todo|briefing|schedule|umbrella|weather|free at|am i free|my list|gcal|google calendar|check off|snooze|cancel reminder|i'?m in|timezone|location)\b/i;
 
 async function answerKnowledge(question: string): Promise<string> {
   const client = groq();
@@ -512,6 +548,7 @@ export async function getReply(
       content:
         SYSTEM_PROMPT +
         `\n\nUser timezone: ${settings.timezone}` +
+        `\nWeather city: ${settings.weatherCity}` +
         `\nMorning briefing: ${settings.morningBriefingTime}`,
     },
     ...history.slice(-12).map((h) => ({
