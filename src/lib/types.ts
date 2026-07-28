@@ -26,6 +26,35 @@ export type UiThemeSettings = {
   custom: ThemeColors;
 };
 
+export type DashboardWidgetType =
+  | "welcome"
+  | "status"
+  | "shortcuts"
+  | "notes"
+  | "image"
+  | "todo"
+  | "due_soon"
+  | "progress"
+  | "sync";
+
+export type DashboardWidget = {
+  id: string;
+  type: DashboardWidgetType;
+  /** Grid span: 1 = narrow, 2 = half-ish, 3 = full */
+  span: 1 | 2 | 3;
+  title?: string;
+  /** Freeform text (welcome subtitle / notes body) */
+  text?: string;
+  /** Image URL or data URL */
+  imageUrl?: string;
+  /** Accent strip color for notes/image */
+  accent?: string;
+};
+
+export type DashboardLayout = {
+  widgets: DashboardWidget[];
+};
+
 export type AppSettings = {
   timezone: string;
   weatherCity: string;
@@ -38,6 +67,7 @@ export type AppSettings = {
   cronControl: CronControlSettings;
   uiTheme: UiThemeSettings;
   listCatalog: string[];
+  dashboardLayout: DashboardLayout;
 };
 
 export type AssignmentStatus =
@@ -49,6 +79,11 @@ export type AssignmentStatus =
 
 export type AssignmentDifficulty = "easy" | "medium" | "hard";
 
+export type CourseLink = {
+  label: string;
+  url: string;
+};
+
 export type Course = {
   id: string;
   name: string;
@@ -56,6 +91,7 @@ export type Course = {
   color: string;
   professor: string;
   schedule: string;
+  links: CourseLink[];
   sortOrder: number;
   createdAt: string;
 };
@@ -77,11 +113,14 @@ export type Assignment = {
   createdAt: string;
 };
 
+export type ListDifficulty = "easy" | "medium" | "hard";
+
 export type ListItem = {
   id: string;
   listName: string;
   text: string;
   checked: boolean;
+  difficulty: ListDifficulty;
   sortOrder: number;
   createdAt: string;
 };
@@ -147,6 +186,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
     custom: { ...DEFAULT_THEME_CUSTOM },
   },
   listCatalog: ["todo", "groceries", "notes", "bhangra"],
+  dashboardLayout: {
+    widgets: [
+      {
+        id: "welcome",
+        type: "welcome",
+        span: 3,
+        title: "Welcome back",
+        text: "Your SMS assistant dashboard — drag widgets, add notes, make it yours.",
+      },
+      { id: "status", type: "status", span: 2 },
+      { id: "sync", type: "sync", span: 1 },
+      { id: "due_soon", type: "due_soon", span: 2 },
+      { id: "todo", type: "todo", span: 1 },
+      { id: "shortcuts", type: "shortcuts", span: 3 },
+    ],
+  },
 };
 
 export const DEFAULT_STORE: Store = {

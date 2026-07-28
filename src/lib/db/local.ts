@@ -40,11 +40,21 @@ async function readStore(): Promise<Store> {
           parsed.settings?.listCatalog?.length
             ? parsed.settings.listCatalog
             : DEFAULT_STORE.settings.listCatalog,
+        dashboardLayout:
+          parsed.settings?.dashboardLayout?.widgets?.length
+            ? parsed.settings.dashboardLayout
+            : DEFAULT_STORE.settings.dashboardLayout,
       },
-      listItems: parsed.listItems || [],
+      listItems: (parsed.listItems || []).map((i) => ({
+        ...i,
+        difficulty: i.difficulty || "medium",
+      })),
       reminders: parsed.reminders || [],
       processedMessages: parsed.processedMessages || [],
-      courses: parsed.courses || [],
+      courses: (parsed.courses || []).map((c) => ({
+        ...c,
+        links: Array.isArray(c.links) ? c.links : [],
+      })),
       assignments: (parsed.assignments || []).map((a) => ({
         ...a,
         link: a.link || "",
@@ -87,6 +97,7 @@ export async function updateSettings(
         ...(patch.uiTheme?.custom || {}),
       },
     },
+    dashboardLayout: patch.dashboardLayout ?? store.settings.dashboardLayout,
   };
   await writeStore(store);
   return store.settings;
@@ -131,6 +142,7 @@ export async function addListItems(
       listName,
       text,
       checked: false,
+      difficulty: "medium",
       sortOrder: order++,
       createdAt: new Date().toISOString(),
     };
@@ -160,6 +172,18 @@ export async function checkOffListItem(
   target.checked = true;
   await writeStore(store);
   return target;
+}
+
+export async function updateListItem(
+  id: string,
+  patch: Partial<Pick<ListItem, "checked" | "difficulty" | "text" | "sortOrder">>,
+): Promise<ListItem | null> {
+  const store = await readStore();
+  const idx = store.listItems.findIndex((i) => i.id === id);
+  if (idx < 0) return null;
+  store.listItems[idx] = { ...store.listItems[idx]!, ...patch };
+  await writeStore(store);
+  return store.listItems[idx]!;
 }
 
 export async function removeListItems(
@@ -352,6 +376,7 @@ export async function upsertCourse(
     color: input.color || "#0f766e",
     professor: input.professor || "",
     schedule: input.schedule || "",
+    links: input.links || [],
     sortOrder:
       input.sortOrder ??
       store.courses.reduce((m, c) => Math.max(m, c.sortOrder), 0) + 1,

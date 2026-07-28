@@ -103,3 +103,57 @@ export function fromInputDateTime(local: string): string | null {
   const d = parseLocalDateTime(local);
   return d ? d.toISOString() : null;
 }
+
+/** Date-only (YYYY-MM-DD) — assignments don't need a time. */
+export function toInputDate(iso: string | null): string {
+  if (!iso) return "";
+  const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1]!;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return formatLocalDateTime(d, false);
+}
+
+export function fromInputDate(local: string): string | null {
+  const s = local.trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1]! : null;
+}
+
+export function dueDateParts(
+  iso: string | null,
+): { year: number; month: number; day: number } | null {
+  if (!iso) return null;
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    return {
+      year: Number(m[1]),
+      month: Number(m[2]) - 1,
+      day: Number(m[3]),
+    };
+  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return {
+    year: d.getFullYear(),
+    month: d.getMonth(),
+    day: d.getDate(),
+  };
+}
+
+export function formatDueDate(
+  iso: string | null,
+  opts?: Intl.DateTimeFormatOptions & { timeZone?: string },
+): string {
+  if (!iso) return "";
+  const parts = dueDateParts(iso);
+  if (!parts) return "";
+  const d = new Date(parts.year, parts.month, parts.day, 12, 0, 0);
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...opts,
+  });
+}

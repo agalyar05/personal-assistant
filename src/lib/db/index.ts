@@ -5,6 +5,7 @@ import type {
   AssignmentDifficulty,
   AssignmentStatus,
   Course,
+  CourseLink,
   ListItem,
   Reminder,
   Store,
@@ -58,6 +59,10 @@ export async function getSettings(): Promise<AppSettings> {
       payload.listCatalog && payload.listCatalog.length
         ? payload.listCatalog
         : DEFAULT_SETTINGS.listCatalog,
+    dashboardLayout:
+      payload.dashboardLayout?.widgets?.length
+        ? payload.dashboardLayout
+        : DEFAULT_SETTINGS.dashboardLayout,
   };
 }
 
@@ -78,6 +83,7 @@ export async function updateSettings(
         ...(patch.uiTheme?.custom || {}),
       },
     },
+    dashboardLayout: patch.dashboardLayout ?? current.dashboardLayout,
   };
   const sb = client();
   await sb.from("app_settings").upsert({ id: 1, payload: next });
@@ -99,6 +105,7 @@ function rowToListItem(row: Record<string, unknown>): ListItem {
     listName: String(row.list_name),
     text: String(row.text),
     checked: Boolean(row.checked),
+    difficulty: (String(row.difficulty || "medium") as ListItem["difficulty"]),
     sortOrder: Number(row.sort_order),
     createdAt: String(row.created_at),
   };
@@ -137,6 +144,7 @@ export async function addListItems(
         list_name: listName,
         text,
         checked: false,
+        difficulty: "medium",
         sort_order: order++,
       })
       .select("*")
@@ -168,6 +176,27 @@ export async function checkOffListItem(
     .select("*")
     .single();
   return data ? rowToListItem(data) : null;
+}
+
+export async function updateListItem(
+  id: string,
+  patch: Partial<Pick<ListItem, "checked" | "difficulty" | "text" | "sortOrder">>,
+): Promise<ListItem | null> {
+  if (!hasSupabase()) return local.updateListItem(id, patch);
+  const sb = client();
+  const body: Record<string, unknown> = {};
+  if (patch.checked !== undefined) body.checked = patch.checked;
+  if (patch.difficulty !== undefined) body.difficulty = patch.difficulty;
+  if (patch.text !== undefined) body.text = patch.text;
+  if (patch.sortOrder !== undefined) body.sort_order = patch.sortOrder;
+  const { data, error } = await sb
+    .from("list_items")
+    .update(body)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error || !data) return null;
+  return rowToListItem(data as Record<string, unknown>);
 }
 
 export async function removeListItems(
@@ -370,6 +399,22 @@ export async function getFullStore(): Promise<Store> {
   };
 }
 
+function parseCourseLinks(raw: unknown): CourseLink[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const o = item as Record<string, unknown>;
+      const url = String(o.url || "").trim();
+      if (!url) return null;
+      return {
+        label: String(o.label || "").trim() || "Link",
+        url,
+      };
+    })
+    .filter(Boolean) as CourseLink[];
+}
+
 function rowToCourse(row: Record<string, unknown>): Course {
   return {
     id: String(row.id),
@@ -378,6 +423,7 @@ function rowToCourse(row: Record<string, unknown>): Course {
     color: String(row.color || "#0f766e"),
     professor: String(row.professor || ""),
     schedule: String(row.schedule || ""),
+    links: parseCourseLinks(row.links),
     sortOrder: Number(row.sort_order || 0),
     createdAt: String(row.created_at || new Date().toISOString()),
   };
@@ -418,18 +464,36 @@ export async function upsertCourse(
 ): Promise<Course> {
   if (!hasSupabase()) return local.upsertCourse(input);
   const sb = client();
-  const body: Record<string, unknown> = {
-    name: input.name,
-    code: input.code ?? "",
-    color: input.color ?? "#0f766e",
-    professor: input.professor ?? "",
-    schedule: input.schedule ?? "",
-    sort_order: input.sortOrder ?? 0,
-  };
-  if (input.id) body.id = input.id;
+  if (input.id) {
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.code !== undefined) body.code = input.code;
+    if (input.color !== undefined) body.color = input.color;
+    if (input.professor !== undefined) body.professor = input.professor;
+    if (input.schedule !== undefined) body.schedule = input.schedule;
+    if (input.sortOrder !== undefined) body.sort_order = input.sortOrder;
+    if (input.links !== undefined) body.links = input.links;
+    const { data, error } = await sb
+      .from("courses")
+      .update(body)
+      .eq("id", input.id)
+      .select("*")
+      .single();
+    if (error || !data) {
+      throw new Error(error?.message || "Failed to save course");
+    }
+    return rowToCourse(data as Record<string, unknown>);
+  }
   const { data, error } = await sb
     .from("courses")
-    .upsert(body)
+    .insert({
+      name: input.name,
+      code: input.code ?? "",
+      color: input.color ?? "#0f766e",
+      professor: input.professor ?? "",
+      schedule: input.schedule ?? "",
+      sort_order: input.sortOrder ?? 0,
+      links: input.links ?? [],
+    })
     .select("*")
     .single();
   if (error || !data) throw new Error(error?.message || "Failed to save course");

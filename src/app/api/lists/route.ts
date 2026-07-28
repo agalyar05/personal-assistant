@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as db from "@/lib/db";
 import * as lists from "@/lib/lists";
+import type { ListDifficulty } from "@/lib/types";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -13,11 +14,12 @@ export async function GET(req: Request) {
       items: [],
     });
   }
+  const includeChecked = url.searchParams.get("all") === "1";
   const items = await db.getListItems(name);
   return NextResponse.json({
     provider: db.dbProvider(),
     names,
-    items: items.filter((i) => !i.checked),
+    items: includeChecked ? items : items.filter((i) => !i.checked),
     all: items,
   });
 }
@@ -28,6 +30,10 @@ export async function POST(req: Request) {
     new_name?: string;
     items?: string[];
     action?: string;
+    id?: string;
+    checked?: boolean;
+    difficulty?: ListDifficulty;
+    text?: string;
   };
   const listName = body.list_name || lists.DEFAULT_GROCERY;
 
@@ -52,6 +58,14 @@ export async function POST(req: Request) {
   if (body.action === "clear") {
     const n = await db.clearList(lists.normalizeListName(listName));
     return NextResponse.json({ cleared: n });
+  }
+  if (body.action === "update" && body.id) {
+    const item = await db.updateListItem(body.id, {
+      checked: body.checked,
+      difficulty: body.difficulty,
+      text: body.text,
+    });
+    return NextResponse.json({ item });
   }
   const msg = await lists.addToList(listName, body.items || []);
   return NextResponse.json({

@@ -1,9 +1,34 @@
 import * as db from "./db";
+import { formatDueDate, toInputDate } from "./fill";
 import type { Assignment } from "./types";
 import { isClosedAssignmentStatus } from "./types";
 
 export function statusLabel(status: Assignment["status"]): string {
   return status.replace(/_/g, " ");
+}
+
+function ymdInTimezone(date: Date, timezone: string): string {
+  return date.toLocaleDateString("en-CA", { timeZone: timezone });
+}
+
+function assignmentDueYmd(dueAt: string, timezone: string): string | null {
+  const trimmed = dueAt.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const dateOnly = toInputDate(trimmed);
+  if (dateOnly && !trimmed.includes("T") && !/[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    return dateOnly;
+  }
+  try {
+    return ymdInTimezone(new Date(dueAt), timezone);
+  } catch {
+    return dateOnly || null;
+  }
+}
+
+function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y!, m! - 1, d! + days, 12, 0, 0);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
 export async function formatDueSummary(
@@ -14,29 +39,22 @@ export async function formatDueSummary(
   const courses = await db.getCourses();
   const byId = new Map(courses.map((c) => [c.id, c]));
 
-  const wallNow = new Date(
-    new Date().toLocaleString("en-US", { timeZone: timezone }),
-  );
-  const start = new Date(wallNow);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  if (which === "today") end.setDate(end.getDate() + 1);
-  else if (which === "tomorrow") {
-    start.setDate(start.getDate() + 1);
-    end.setDate(end.getDate() + 2);
-  } else end.setDate(end.getDate() + 7);
-
-  const startMs = start.getTime();
-  const endMs = end.getTime();
+  const todayYmd = ymdInTimezone(new Date(), timezone);
+  let startStr = todayYmd;
+  let endStr = addDaysYmd(todayYmd, 1);
+  if (which === "tomorrow") {
+    startStr = addDaysYmd(todayYmd, 1);
+    endStr = addDaysYmd(todayYmd, 2);
+  } else if (which === "week") {
+    endStr = addDaysYmd(todayYmd, 7);
+  }
 
   const items = assignments
     .filter((a) => {
       if (!a.dueAt || isClosedAssignmentStatus(a.status)) return false;
-      const dueWall = new Date(
-        new Date(a.dueAt).toLocaleString("en-US", { timeZone: timezone }),
-      );
-      const t = dueWall.getTime();
-      return t >= startMs && t < endMs;
+      const ymd = assignmentDueYmd(a.dueAt, timezone);
+      if (!ymd) return false;
+      return ymd >= startStr && ymd < endStr;
     })
     .sort((a, b) => String(a.dueAt).localeCompare(String(b.dueAt)));
 
@@ -48,16 +66,7 @@ export async function formatDueSummary(
 
   const lines = items.map((a, i) => {
     const course = a.courseId ? byId.get(a.courseId) : null;
-    const when = a.dueAt
-      ? new Date(a.dueAt).toLocaleString("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-          timeZone: timezone,
-        })
-      : "?";
+    const when = formatDueDate(a.dueAt) || "?";
     const cls = course?.code || course?.name || "General";
     return `${i + 1}. ${cls}: ${a.title} — ${when}`;
   });

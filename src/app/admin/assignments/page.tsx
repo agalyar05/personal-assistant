@@ -10,6 +10,8 @@ import {
   isSubmittedStyle,
 } from "@/lib/types";
 import { AssignmentSheet } from "@/components/AssignmentSheet";
+import { CelebrationBurst } from "@/components/CelebrationBurst";
+import { dueDateParts, formatDueDate } from "@/lib/fill";
 
 type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
@@ -22,6 +24,7 @@ export default function AssignmentsPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [msg, setMsg] = useState("");
+  const [celebrate, setCelebrate] = useState(false);
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -49,8 +52,9 @@ export default function AssignmentsPage() {
   );
 
   async function patchAssignment(patch: Partial<Assignment> & { id: string }) {
-    setAssignments((prev) =>
-      prev.map((a) => (a.id === patch.id ? { ...a, ...patch } : a)),
+    const prev = assignments.find((a) => a.id === patch.id);
+    setAssignments((list) =>
+      list.map((a) => (a.id === patch.id ? { ...a, ...patch } : a)),
     );
     const res = await fetch("/api/assignments", {
       method: "POST",
@@ -60,9 +64,14 @@ export default function AssignmentsPage() {
     if (!res.ok) {
       setMsg("Save failed — reloading");
       await load();
+      return;
     }
-    // Keep optimistic row as source of truth so blur→save doesn't remount
-    // the Class/Due controls mid-click.
+    if (
+      patch.status === "submitted" &&
+      prev?.status !== "submitted"
+    ) {
+      setCelebrate(true);
+    }
   }
 
   async function addBlankRow() {
@@ -116,6 +125,11 @@ export default function AssignmentsPage() {
 
   return (
     <div className="space-y-6">
+      <CelebrationBurst
+        open={celebrate}
+        onDone={() => setCelebrate(false)}
+        label="Submitted! 🎉"
+      />
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -179,6 +193,7 @@ export default function AssignmentsPage() {
           setMonth={setMonth}
           assignments={assignments}
           courseMap={courseMap}
+          onMoveDay={(id, dueAt) => void patchAssignment({ id, dueAt })}
         />
       )}
 
@@ -271,16 +286,7 @@ function AgendaView({
                   </span>
                 </div>
                 <div className="text-xs text-[var(--muted)]">
-                  {c?.code || c?.name || "General"} ·{" "}
-                  {a.dueAt
-                    ? new Date(a.dueAt).toLocaleString("en-US", {
-                        weekday: "short",
-                        month: "short",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })
-                    : ""}
+                  {c?.code || c?.name || "General"} · {formatDueDate(a.dueAt)}
                 </div>
               </div>
               <select
@@ -424,11 +430,13 @@ function CalendarView({
   setMonth,
   assignments,
   courseMap,
+  onMoveDay,
 }: {
   month: Date;
   setMonth: (d: Date) => void;
   assignments: Assignment[];
   courseMap: Map<string, Course>;
+  onMoveDay: (id: string, dueAt: string) => void;
 }) {
   const year = month.getFullYear();
   const mo = month.getMonth();
@@ -440,21 +448,26 @@ function CalendarView({
   ];
   while (cells.length % 7) cells.push(null);
 
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overDay, setOverDay] = useState<number | null>(null);
+
   function itemsForDay(day: number) {
     return assignments.filter((a) => {
       if (!a.dueAt || isClosedAssignmentStatus(a.status)) return false;
-      const d = new Date(a.dueAt);
-      return (
-        d.getFullYear() === year &&
-        d.getMonth() === mo &&
-        d.getDate() === day
-      );
+      const p = dueDateParts(a.dueAt);
+      return p && p.year === year && p.month === mo && p.day === day;
     });
+  }
+
+  function dateForDay(day: number): string {
+    const m = String(mo + 1).padStart(2, "0");
+    const d = String(day).padStart(2, "0");
+    return `${year}-${m}-${d}`;
   }
 
   return (
     <section className="w-full">
-      <div className="mb-4 flex items-center justify-between px-1">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 px-1">
         <button
           type="button"
           className="rounded-lg px-3 py-1 text-sm text-[var(--muted)] hover:bg-black/5"
@@ -473,6 +486,9 @@ function CalendarView({
           →
         </button>
       </div>
+      <p className="mb-3 text-center text-xs text-[var(--muted)]">
+        Drag assignments onto another day to reschedule
+      </p>
       <div className="grid grid-cols-7 gap-px text-center text-xs text-[var(--muted)]">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
           <div key={d} className="py-2 font-medium">
@@ -484,7 +500,25 @@ function CalendarView({
         {cells.map((day, i) => (
           <div
             key={i}
-            className="min-h-[7.5rem] bg-[var(--bg)] p-2 text-left sm:min-h-[9rem]"
+            onDragOver={(e) => {
+              if (!day) return;
+              e.preventDefault();
+              setOverDay(day);
+            }}
+            onDragLeave={() => setOverDay((d) => (d === day ? null : d))}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (!day) return;
+              const id = e.dataTransfer.getData("text/assignment-id") || dragId;
+              if (id) onMoveDay(id, dateForDay(day));
+              setDragId(null);
+              setOverDay(null);
+            }}
+            className={`min-h-[7.5rem] p-2 text-left sm:min-h-[9rem] ${
+              overDay === day
+                ? "bg-[var(--accent-soft)]"
+                : "bg-[var(--bg)]"
+            }`}
           >
             {day && (
               <>
@@ -497,9 +531,21 @@ function CalendarView({
                     return (
                       <div
                         key={a.id}
-                        className="truncate rounded px-1.5 py-1 text-[11px] text-white"
+                        draggable
+                        onDragStart={(e) => {
+                          setDragId(a.id);
+                          e.dataTransfer.setData("text/assignment-id", a.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => {
+                          setDragId(null);
+                          setOverDay(null);
+                        }}
+                        className={`cursor-grab truncate rounded px-1.5 py-1 text-[11px] text-white active:cursor-grabbing ${
+                          dragId === a.id ? "opacity-40" : ""
+                        }`}
                         style={{ background: c?.color || "var(--accent)" }}
-                        title={a.title}
+                        title={`${a.title} — drag to another day`}
                       >
                         {a.title}
                       </div>
@@ -642,14 +688,7 @@ function KanbanView({
                 >
                   <div className="text-sm font-medium">{a.title}</div>
                   <div className="mt-1 text-xs text-[var(--muted)] no-underline">
-                    {a.dueAt
-                      ? new Date(a.dueAt).toLocaleString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })
-                      : "No due date"}
+                    {a.dueAt ? formatDueDate(a.dueAt) : "No due date"}
                   </div>
                 </div>
               ))}

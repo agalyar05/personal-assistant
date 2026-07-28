@@ -1,14 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Course } from "@/lib/types";
+import type { Course, CourseLink } from "@/lib/types";
 import { classColorsForTheme } from "@/lib/themes";
 import { useUiTheme } from "@/components/ThemePicker";
+
+const MAX_LINKS = 5;
+
+function emptyLinks(): CourseLink[] {
+  return [];
+}
+
+function normalizeUrl(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://${s}`;
+}
 
 export default function GroupsPage() {
   const { theme } = useUiTheme();
   const [courses, setCourses] = useState<Course[]>([]);
   const [msg, setMsg] = useState("");
+  const [editingLinksId, setEditingLinksId] = useState<string | null>(null);
+  const [draftLinks, setDraftLinks] = useState<CourseLink[]>([]);
   const suggestions = classColorsForTheme(theme.id);
   const [form, setForm] = useState({
     name: "",
@@ -16,20 +31,25 @@ export default function GroupsPage() {
     color: suggestions[0]?.hex || "#0f766e",
     professor: "",
     schedule: "",
+    links: emptyLinks() as CourseLink[],
   });
 
   const load = useCallback(async () => {
     const res = await fetch("/api/courses");
     const json = await res.json();
-    setCourses(json.courses || []);
+    setCourses(
+      (json.courses || []).map((c: Course) => ({
+        ...c,
+        links: Array.isArray(c.links) ? c.links : [],
+      })),
+    );
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
   useEffect(() => {
-    // When theme changes, nudge default color if form still on an old suggestion
     const stillSuggested = suggestions.some((s) => s.hex === form.color);
     if (!stillSuggested && suggestions[0]) {
       setForm((f) => ({ ...f, color: suggestions[0]!.hex }));
@@ -44,6 +64,7 @@ export default function GroupsPage() {
       color: form.color,
       professor: form.professor,
       schedule: form.schedule,
+      links: form.links.filter((l) => l.url.trim()),
     };
     if (!payload.name?.trim()) {
       setMsg("Name required");
@@ -65,6 +86,7 @@ export default function GroupsPage() {
         color: suggestions[0]?.hex || "#0f766e",
         professor: "",
         schedule: "",
+        links: emptyLinks(),
       });
       setMsg("Class added");
     } else {
@@ -85,13 +107,41 @@ export default function GroupsPage() {
     await load();
   }
 
+  function startEditLinks(c: Course) {
+    setEditingLinksId(c.id);
+    setDraftLinks(
+      c.links.length
+        ? c.links.map((l) => ({ ...l }))
+        : [{ label: "", url: "" }],
+    );
+  }
+
+  async function saveLinks(c: Course) {
+    const links = draftLinks
+      .map((l) => ({
+        label: l.label.trim() || "Link",
+        url: normalizeUrl(l.url),
+      }))
+      .filter((l) => l.url);
+    await saveCourse({
+      id: c.id,
+      name: c.name,
+      code: c.code,
+      color: c.color,
+      professor: c.professor,
+      schedule: c.schedule,
+      links,
+    });
+    setEditingLinksId(null);
+  }
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
         <h2 className="display text-2xl">Groups</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Classes and color chips used across Assignments. Palette suggestions
-          follow your theme (change theme in Settings).
+          Classes and color chips used across Assignments. Add Canvas / syllabus
+          links under each class. Palette suggestions follow your theme.
         </p>
         {msg && <p className="mt-3 text-sm text-[var(--accent)]">{msg}</p>}
       </section>
@@ -125,6 +175,63 @@ export default function GroupsPage() {
             value={form.schedule}
             onChange={(e) => setForm({ ...form, schedule: e.target.value })}
           />
+        </div>
+        <div className="mt-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
+            Links (optional)
+          </p>
+          <div className="mt-2 space-y-2">
+            {form.links.map((link, i) => (
+              <div key={i} className="flex flex-wrap gap-2">
+                <input
+                  placeholder="Label (Canvas)"
+                  className="w-28 rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm sm:w-36"
+                  value={link.label}
+                  onChange={(e) => {
+                    const links = [...form.links];
+                    links[i] = { ...link, label: e.target.value };
+                    setForm({ ...form, links });
+                  }}
+                />
+                <input
+                  placeholder="https://…"
+                  className="min-w-[180px] flex-1 rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
+                  value={link.url}
+                  onChange={(e) => {
+                    const links = [...form.links];
+                    links[i] = { ...link, url: e.target.value };
+                    setForm({ ...form, links });
+                  }}
+                />
+                <button
+                  type="button"
+                  className="text-sm text-red-700"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      links: form.links.filter((_, j) => j !== i),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            {form.links.length < MAX_LINKS && (
+              <button
+                type="button"
+                className="text-sm text-[var(--accent)]"
+                onClick={() =>
+                  setForm({
+                    ...form,
+                    links: [...form.links, { label: "", url: "" }],
+                  })
+                }
+              >
+                + Add link
+              </button>
+            )}
+          </div>
         </div>
         <p className="mt-4 text-xs uppercase tracking-wide text-[var(--muted)]">
           Suggested colors
@@ -170,20 +277,113 @@ export default function GroupsPage() {
             className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4"
           >
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <span
-                  className="h-4 w-4 rounded-full"
-                  style={{ background: c.color }}
-                />
-                <div>
-                  <div className="font-medium">
-                    {c.code ? `${c.code} — ${c.name}` : c.name}
-                  </div>
-                  <div className="text-sm text-[var(--muted)]">
-                    {[c.professor, c.schedule].filter(Boolean).join(" · ") ||
-                      "No details yet"}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="h-4 w-4 shrink-0 rounded-full"
+                    style={{ background: c.color }}
+                  />
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      {c.code ? `${c.code} — ${c.name}` : c.name}
+                    </div>
+                    <div className="text-sm text-[var(--muted)]">
+                      {[c.professor, c.schedule].filter(Boolean).join(" · ") ||
+                        "No details yet"}
+                    </div>
+                    {editingLinksId !== c.id && (c.links?.length ?? 0) > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
+                        {c.links.map((l, i) => (
+                          <a
+                            key={`${l.url}-${i}`}
+                            href={normalizeUrl(l.url)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[var(--accent)] hover:underline"
+                          >
+                            {l.label || "Link"}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {editingLinksId !== c.id && (
+                      <button
+                        type="button"
+                        className="mt-2 text-xs text-[var(--muted)] hover:text-[var(--accent)]"
+                        onClick={() => startEditLinks(c)}
+                      >
+                        {(c.links?.length ?? 0) ? "Edit links" : "+ Add links"}
+                      </button>
+                    )}
                   </div>
                 </div>
+                {editingLinksId === c.id && (
+                  <div className="mt-3 space-y-2 pl-7">
+                    {draftLinks.map((link, i) => (
+                      <div key={i} className="flex flex-wrap gap-2">
+                        <input
+                          placeholder="Label"
+                          className="w-28 rounded-lg border border-[var(--line)] bg-white px-2 py-1.5 text-sm"
+                          value={link.label}
+                          onChange={(e) => {
+                            const next = [...draftLinks];
+                            next[i] = { ...link, label: e.target.value };
+                            setDraftLinks(next);
+                          }}
+                        />
+                        <input
+                          placeholder="https://…"
+                          className="min-w-[160px] flex-1 rounded-lg border border-[var(--line)] bg-white px-2 py-1.5 text-sm"
+                          value={link.url}
+                          onChange={(e) => {
+                            const next = [...draftLinks];
+                            next[i] = { ...link, url: e.target.value };
+                            setDraftLinks(next);
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="text-xs text-red-700"
+                          onClick={() =>
+                            setDraftLinks(draftLinks.filter((_, j) => j !== i))
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap gap-2">
+                      {draftLinks.length < MAX_LINKS && (
+                        <button
+                          type="button"
+                          className="text-sm text-[var(--accent)]"
+                          onClick={() =>
+                            setDraftLinks([
+                              ...draftLinks,
+                              { label: "", url: "" },
+                            ])
+                          }
+                        >
+                          + Link
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded-lg bg-[var(--accent)] px-3 py-1 text-sm text-white"
+                        onClick={() => void saveLinks(c)}
+                      >
+                        Save links
+                      </button>
+                      <button
+                        type="button"
+                        className="text-sm text-[var(--muted)]"
+                        onClick={() => setEditingLinksId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <div className="flex gap-1">

@@ -25,3 +25,36 @@ h2,
 .display {
   font-family: var(--font-display), Georgia, serif;
 }
+
+@keyframes pa-confetti {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh) rotate(720deg);
+    opacity: 0.15;
+  }
+}
+
+@keyframes pa-pop {
+  0% {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.pa-confetti-piece {
+  animation-name: pa-confetti;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.pa-pop {
+  animation: pa-pop 0.45s ease-out;
+}
+

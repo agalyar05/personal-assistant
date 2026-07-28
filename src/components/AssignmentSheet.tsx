@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fillDateSeries,
   fillTitleSeries,
-  fromInputDateTime,
-  toInputDateTime,
+  fromInputDate,
+  toInputDate,
 } from "@/lib/fill";
 import type {
   Assignment,
@@ -37,7 +37,7 @@ const COL_META: { key: ColKey; label: string; width: string }[] = [
   { key: "link", label: "Link", width: "min-w-[160px]" },
   { key: "courseId", label: "Class", width: "min-w-[120px]" },
   { key: "status", label: "Progress", width: "min-w-[140px]" },
-  { key: "dueAt", label: "Due", width: "min-w-[190px]" },
+  { key: "dueAt", label: "Due", width: "min-w-[140px]" },
   { key: "assignmentType", label: "Type", width: "min-w-[110px]" },
   { key: "difficulty", label: "Difficulty", width: "min-w-[110px]" },
   { key: "pointsEarned", label: "Earned", width: "min-w-[80px]" },
@@ -122,9 +122,32 @@ export function AssignmentSheet({
     [],
   );
 
+  function newRowFromSeed(
+    seed: Assignment,
+    startIdx: number,
+    i: number,
+    titles: string[],
+    extra: Partial<Assignment> = {},
+  ): Partial<Assignment> & { title: string } {
+    return {
+      title: titles[i] || `${seed.title} ${i + 1}`,
+      courseId: seed.courseId,
+      status: seed.status,
+      dueAt: seed.dueAt,
+      link: seed.link,
+      assignmentType: seed.assignmentType,
+      difficulty: seed.difficulty,
+      pointsEarned: seed.pointsEarned,
+      pointsPossible: seed.pointsPossible,
+      notes: seed.notes,
+      sortOrder: (seed.sortOrder || startIdx + 1) + i,
+      ...extra,
+    };
+  }
+
   async function runFillDown() {
     if (!selected) {
-      onMsg("Click a Title or Due cell first, then Fill down");
+      onMsg("Click any cell first, then Fill down");
       return;
     }
     const sorted = [...assignments].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -133,58 +156,52 @@ export function AssignmentSheet({
     const seed = sorted[startIdx]!;
     const count = fillRows;
     const rows: (Partial<Assignment> & { title?: string; id?: string })[] = [];
+    const titles = fillTitleSeries(seed.title, count);
+    const col = selected.col;
+    const colLabel = metaByKey.get(col)?.label || col;
 
-    if (selected.col === "title") {
-      const titles = fillTitleSeries(seed.title, count);
+    if (col === "title") {
       for (let i = 0; i < count; i++) {
         const existing = sorted[startIdx + i];
         if (existing) rows.push({ id: existing.id, title: titles[i]! });
-        else {
-          rows.push({
-            title: titles[i]!,
-            courseId: seed.courseId,
-            status: seed.status,
-            link: seed.link,
-            assignmentType: seed.assignmentType,
-            difficulty: seed.difficulty,
-            sortOrder: (seed.sortOrder || startIdx + 1) + i,
-          });
-        }
+        else rows.push(newRowFromSeed(seed, startIdx, i, titles));
       }
-    } else if (selected.col === "dueAt") {
-      const seeds = [
-        toInputDateTime(seed.dueAt),
-        toInputDateTime(sorted[startIdx + 1]?.dueAt || null),
+    } else if (col === "dueAt") {
+      const dateSeeds = [
+        toInputDate(seed.dueAt),
+        toInputDate(sorted[startIdx + 1]?.dueAt || null),
       ];
-      const dates = fillDateSeries(seeds, count, fillMode);
-      const titles = fillTitleSeries(seed.title, count);
+      const dates = fillDateSeries(dateSeeds, count, fillMode);
       for (let i = 0; i < count; i++) {
         const existing = sorted[startIdx + i];
-        const dueAt = fromInputDateTime(dates[i] || "");
+        const dueAt = fromInputDate(dates[i] || "");
         if (existing) rows.push({ id: existing.id, dueAt });
-        else {
-          rows.push({
-            title: titles[i] || `${seed.title} ${i + 1}`,
-            courseId: seed.courseId,
-            status: "not_started",
-            dueAt,
-            link: "",
-            assignmentType: seed.assignmentType,
-            difficulty: seed.difficulty,
-            sortOrder: (seed.sortOrder || startIdx + 1) + i,
-          });
-        }
+        else
+          rows.push(
+            newRowFromSeed(seed, startIdx, i, titles, {
+              dueAt,
+              status: "not_started",
+              link: "",
+            }),
+          );
       }
     } else {
-      onMsg("Fill down works on Title or Due columns");
-      return;
+      // Copy seed value down (Class, Progress, Type, Difficulty, Link, Notes, points…)
+      for (let i = 0; i < count; i++) {
+        const existing = sorted[startIdx + i];
+        const patch = { [col]: seed[col] } as Partial<Assignment>;
+        if (existing) rows.push({ id: existing.id, ...patch });
+        else rows.push(newRowFromSeed(seed, startIdx, i, titles, patch));
+      }
     }
 
     await onBulk(rows);
     onMsg(
-      selected.col === "dueAt"
+      col === "dueAt"
         ? `Filled ${count} due dates (${fillMode})`
-        : `Filled ${count} titles`,
+        : col === "title"
+          ? `Filled ${count} titles`
+          : `Filled ${count} ${colLabel} cells`,
     );
   }
 
@@ -313,14 +330,14 @@ export function AssignmentSheet({
       case "dueAt":
         return wrap(
           <input
-            type="datetime-local"
+            type="date"
             className="w-full bg-transparent py-1 outline-none"
-            value={toInputDateTime(a.dueAt)}
+            value={toInputDate(a.dueAt)}
             onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) =>
               void onPatch({
                 id: a.id,
-                dueAt: fromInputDateTime(e.target.value),
+                dueAt: fromInputDate(e.target.value),
               })
             }
           />,
@@ -448,7 +465,8 @@ export function AssignmentSheet({
           Fill down
         </button>
         <span className="text-xs text-[var(--muted)]">
-          Drag column headers to reorder · Title with a Link becomes clickable
+          Select any column → Fill down · Drag headers to reorder · Linked
+          titles are clickable
         </span>
       </div>
       <div className="overflow-auto">
