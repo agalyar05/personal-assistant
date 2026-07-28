@@ -1,37 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  fillDateSeries,
-  fillTitleSeries,
-  fromInputDateTime,
-  toInputDateTime,
-} from "@/lib/fill";
-import type {
-  Assignment,
-  AssignmentDifficulty,
-  AssignmentStatus,
-  Course,
-} from "@/lib/types";
+import type { Assignment, AssignmentStatus, Course } from "@/lib/types";
 import {
   ASSIGNMENT_DIFFICULTIES,
   ASSIGNMENT_STATUSES,
 } from "@/lib/types";
 import { ThemePicker, useUiTheme } from "@/components/ThemePicker";
+import { AssignmentSheet } from "@/components/AssignmentSheet";
 
 type View = "sheet" | "calendar" | "kanban";
 type KanbanBy = "status" | "class" | "difficulty";
-type FillMode = "auto" | "daily" | "weekly";
-type ColKey =
-  | "title"
-  | "courseId"
-  | "status"
-  | "dueAt"
-  | "assignmentType"
-  | "difficulty"
-  | "pointsEarned"
-  | "pointsPossible"
-  | "notes";
 
 const STATUS_LABEL: Record<AssignmentStatus, string> = {
   not_started: "Not started",
@@ -44,7 +23,6 @@ export default function AssignmentsPage() {
   const { theme, saveTheme } = useUiTheme();
   const [view, setView] = useState<View>("sheet");
   const [kanbanBy, setKanbanBy] = useState<KanbanBy>("status");
-  const [fillMode, setFillMode] = useState<FillMode>("weekly");
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [msg, setMsg] = useState("");
@@ -57,16 +35,16 @@ export default function AssignmentsPage() {
     code: "",
     color: "#0f766e",
   });
-  const [selected, setSelected] = useState<{
-    rowId: string;
-    col: ColKey;
-  } | null>(null);
-  const [fillRows, setFillRows] = useState(4);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/assignments");
     const json = await res.json();
-    setAssignments(json.assignments || []);
+    setAssignments(
+      (json.assignments || []).map((a: Assignment) => ({
+        ...a,
+        link: a.link || "",
+      })),
+    );
     setCourses(json.courses || []);
   }, []);
 
@@ -79,7 +57,10 @@ export default function AssignmentsPage() {
     [courses],
   );
 
-  async function saveAssignment(patch: Partial<Assignment> & { title: string; id?: string }) {
+  async function patchAssignment(patch: Partial<Assignment> & { id: string }) {
+    setAssignments((prev) =>
+      prev.map((a) => (a.id === patch.id ? { ...a, ...patch } : a)),
+    );
     const res = await fetch("/api/assignments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -87,20 +68,40 @@ export default function AssignmentsPage() {
     });
     if (!res.ok) {
       setMsg("Save failed");
+      await load();
       return;
     }
-    await load();
+    const json = await res.json();
+    if (json.assignment) {
+      setAssignments((prev) =>
+        prev.map((a) =>
+          a.id === json.assignment.id
+            ? { ...json.assignment, link: json.assignment.link || "" }
+            : a,
+        ),
+      );
+    }
   }
 
   async function addBlankRow() {
-    await saveAssignment({
-      title: "New assignment",
-      status: "not_started",
-      difficulty: "medium",
-      assignmentType: "Homework",
-      sortOrder: assignments.length + 1,
+    const res = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "New assignment",
+        status: "not_started",
+        difficulty: "medium",
+        assignmentType: "Homework",
+        link: "",
+        sortOrder: assignments.length + 1,
+      }),
     });
-    setMsg("Row added — edit title / drag-fill to expand");
+    if (!res.ok) {
+      setMsg("Could not add row");
+      return;
+    }
+    setMsg("Row added — edit title / use Fill down");
+    await load();
   }
 
   async function removeRow(id: string) {
@@ -109,89 +110,35 @@ export default function AssignmentsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "delete", id }),
     });
-    await load();
+    setAssignments((prev) => prev.filter((a) => a.id !== id));
   }
 
   async function addCourse() {
     if (!courseForm.name.trim()) return;
-    await fetch("/api/courses", {
+    const res = await fetch("/api/courses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(courseForm),
     });
+    const json = await res.json();
+    if (json.course) {
+      setCourses((prev) => [...prev, json.course]);
+    } else {
+      const all = await fetch("/api/courses").then((r) => r.json());
+      setCourses(all.courses || []);
+    }
     setCourseForm({ name: "", code: "", color: "#0f766e" });
-    await load();
+    setMsg("Class added");
   }
 
-  async function runFillDown() {
-    if (!selected) {
-      setMsg("Click a cell first, then Fill down");
-      return;
-    }
-    const sorted = [...assignments].sort((a, b) => a.sortOrder - b.sortOrder);
-    const startIdx = sorted.findIndex((a) => a.id === selected.rowId);
-    if (startIdx < 0) return;
-    const seed = sorted[startIdx]!;
-    const count = fillRows;
-    const rows: (Partial<Assignment> & { title: string })[] = [];
-
-    if (selected.col === "title") {
-      const titles = fillTitleSeries(seed.title, count);
-      for (let i = 0; i < count; i++) {
-        const existing = sorted[startIdx + i];
-        if (existing) {
-          rows.push({ ...existing, title: titles[i]! });
-        } else {
-          rows.push({
-            title: titles[i]!,
-            courseId: seed.courseId,
-            status: seed.status,
-            dueAt: null,
-            assignmentType: seed.assignmentType,
-            difficulty: seed.difficulty,
-            sortOrder: (seed.sortOrder || startIdx + 1) + i,
-          });
-        }
-      }
-    } else if (selected.col === "dueAt") {
-      const seeds = [
-        toInputDateTime(seed.dueAt),
-        toInputDateTime(sorted[startIdx + 1]?.dueAt || null),
-      ];
-      const dates = fillDateSeries(seeds, count, fillMode);
-      for (let i = 0; i < count; i++) {
-        const existing = sorted[startIdx + i];
-        const dueAt = fromInputDateTime(dates[i] || "");
-        if (existing) {
-          rows.push({ ...existing, title: existing.title, dueAt });
-        } else {
-          const titles = fillTitleSeries(seed.title, count);
-          rows.push({
-            title: titles[i] || `${seed.title} ${i + 1}`,
-            courseId: seed.courseId,
-            status: "not_started",
-            dueAt,
-            assignmentType: seed.assignmentType,
-            difficulty: seed.difficulty,
-            sortOrder: (seed.sortOrder || startIdx + 1) + i,
-          });
-        }
-      }
-    } else {
-      setMsg("Fill down works on Title or Due columns");
-      return;
-    }
-
+  async function bulkSave(
+    rows: (Partial<Assignment> & { title?: string; id?: string })[],
+  ) {
     await fetch("/api/assignments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "bulk", rows }),
     });
-    setMsg(
-      selected.col === "dueAt"
-        ? `Filled ${count} due dates (${fillMode})`
-        : `Filled ${count} titles`,
-    );
     await load();
   }
 
@@ -202,8 +149,8 @@ export default function AssignmentsPage() {
           <div>
             <h2 className="display text-2xl">Assignments</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Spreadsheet fill-down, calendar, and kanban — text{" "}
-              <code className="text-[var(--ink)]">due today</code> anytime.
+              Spreadsheet-style grid — drag columns, fill down, link titles.
+              Text <code className="text-[var(--ink)]">due today</code>.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -290,7 +237,7 @@ export default function AssignmentsPage() {
           />
           <button
             type="button"
-            onClick={addCourse}
+            onClick={() => void addCourse()}
             className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
           >
             Add class
@@ -299,298 +246,20 @@ export default function AssignmentsPage() {
       </section>
 
       {view === "sheet" && (
-        <section className="overflow-x-auto rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={addBlankRow}
-              className="rounded-xl bg-[var(--accent)] px-3 py-1.5 text-sm text-white"
-            >
-              + Row
-            </button>
-            <label className="text-sm text-[var(--muted)]">
-              Fill
-              <select
-                className="ml-1 rounded-lg border border-[var(--line)] bg-white px-2 py-1"
-                value={fillMode}
-                onChange={(e) => setFillMode(e.target.value as FillMode)}
-              >
-                <option value="weekly">weekly (+7 days)</option>
-                <option value="daily">daily (+1 day)</option>
-                <option value="auto">auto from pattern</option>
-              </select>
-            </label>
-            <label className="text-sm text-[var(--muted)]">
-              rows
-              <input
-                type="number"
-                min={1}
-                max={30}
-                className="ml-1 w-16 rounded-lg border border-[var(--line)] bg-white px-2 py-1"
-                value={fillRows}
-                onChange={(e) => setFillRows(Number(e.target.value) || 1)}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={runFillDown}
-              className="rounded-xl border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
-            >
-              Fill down
-            </button>
-            <span className="text-xs text-[var(--muted)]">
-              Tip: click Title or Due cell → Fill down (Assignment 1→2…, weekly dates)
-            </span>
-          </div>
-          <table className="min-w-[1100px] w-full border-collapse text-sm">
-            <thead>
-              <tr className="text-left text-[var(--muted)]">
-                {[
-                  "Title",
-                  "Class",
-                  "Status",
-                  "Due",
-                  "Type",
-                  "Difficulty",
-                  "Earned",
-                  "Possible",
-                  "Notes",
-                  "",
-                ].map((h) => (
-                  <th key={h} className="border-b border-[var(--line)] px-2 py-2 font-medium">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {assignments.map((a) => (
-                <tr key={a.id} className="align-top">
-                  <Td
-                    active={selected?.rowId === a.id && selected.col === "title"}
-                    onSelect={() => setSelected({ rowId: a.id, col: "title" })}
-                  >
-                    <input
-                      className="w-full bg-transparent outline-none"
-                      value={a.title}
-                      onChange={(e) =>
-                        setAssignments((prev) =>
-                          prev.map((x) =>
-                            x.id === a.id ? { ...x, title: e.target.value } : x,
-                          ),
-                        )
-                      }
-                      onBlur={() =>
-                        saveAssignment({ id: a.id, title: a.title || "Untitled" })
-                      }
-                    />
-                  </Td>
-                  <Td
-                    active={selected?.rowId === a.id && selected.col === "courseId"}
-                    onSelect={() => setSelected({ rowId: a.id, col: "courseId" })}
-                  >
-                    <select
-                      className="w-full bg-transparent outline-none"
-                      value={a.courseId || ""}
-                      onChange={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          courseId: e.target.value || null,
-                        })
-                      }
-                    >
-                      <option value="">—</option>
-                      {courses.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.code || c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </Td>
-                  <Td
-                    active={selected?.rowId === a.id && selected.col === "status"}
-                    onSelect={() => setSelected({ rowId: a.id, col: "status" })}
-                  >
-                    <select
-                      className="w-full bg-transparent outline-none"
-                      value={a.status}
-                      onChange={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          status: e.target.value as AssignmentStatus,
-                        })
-                      }
-                    >
-                      {ASSIGNMENT_STATUSES.map((s) => (
-                        <option key={s} value={s}>
-                          {STATUS_LABEL[s]}
-                        </option>
-                      ))}
-                    </select>
-                  </Td>
-                  <Td
-                    active={selected?.rowId === a.id && selected.col === "dueAt"}
-                    onSelect={() => setSelected({ rowId: a.id, col: "dueAt" })}
-                  >
-                    <input
-                      type="datetime-local"
-                      className="w-full bg-transparent outline-none"
-                      value={toInputDateTime(a.dueAt)}
-                      onChange={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          dueAt: fromInputDateTime(e.target.value),
-                        })
-                      }
-                    />
-                  </Td>
-                  <Td
-                    active={
-                      selected?.rowId === a.id && selected.col === "assignmentType"
-                    }
-                    onSelect={() =>
-                      setSelected({ rowId: a.id, col: "assignmentType" })
-                    }
-                  >
-                    <input
-                      className="w-full bg-transparent outline-none"
-                      value={a.assignmentType}
-                      onBlur={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          assignmentType: e.target.value,
-                        })
-                      }
-                      onChange={(e) =>
-                        setAssignments((prev) =>
-                          prev.map((x) =>
-                            x.id === a.id
-                              ? { ...x, assignmentType: e.target.value }
-                              : x,
-                          ),
-                        )
-                      }
-                    />
-                  </Td>
-                  <Td
-                    active={
-                      selected?.rowId === a.id && selected.col === "difficulty"
-                    }
-                    onSelect={() =>
-                      setSelected({ rowId: a.id, col: "difficulty" })
-                    }
-                  >
-                    <select
-                      className="w-full bg-transparent outline-none"
-                      value={a.difficulty}
-                      onChange={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          difficulty: e.target.value as AssignmentDifficulty,
-                        })
-                      }
-                    >
-                      {ASSIGNMENT_DIFFICULTIES.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                  </Td>
-                  <Td
-                    active={
-                      selected?.rowId === a.id && selected.col === "pointsEarned"
-                    }
-                    onSelect={() =>
-                      setSelected({ rowId: a.id, col: "pointsEarned" })
-                    }
-                  >
-                    <input
-                      type="number"
-                      className="w-20 bg-transparent outline-none"
-                      value={a.pointsEarned ?? ""}
-                      onChange={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          pointsEarned: e.target.value
-                            ? Number(e.target.value)
-                            : null,
-                        })
-                      }
-                    />
-                  </Td>
-                  <Td
-                    active={
-                      selected?.rowId === a.id &&
-                      selected.col === "pointsPossible"
-                    }
-                    onSelect={() =>
-                      setSelected({ rowId: a.id, col: "pointsPossible" })
-                    }
-                  >
-                    <input
-                      type="number"
-                      className="w-20 bg-transparent outline-none"
-                      value={a.pointsPossible ?? ""}
-                      onChange={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          pointsPossible: e.target.value
-                            ? Number(e.target.value)
-                            : null,
-                        })
-                      }
-                    />
-                  </Td>
-                  <Td
-                    active={selected?.rowId === a.id && selected.col === "notes"}
-                    onSelect={() => setSelected({ rowId: a.id, col: "notes" })}
-                  >
-                    <input
-                      className="w-40 bg-transparent outline-none"
-                      value={a.notes}
-                      onBlur={(e) =>
-                        saveAssignment({
-                          id: a.id,
-                          title: a.title,
-                          notes: e.target.value,
-                        })
-                      }
-                      onChange={(e) =>
-                        setAssignments((prev) =>
-                          prev.map((x) =>
-                            x.id === a.id ? { ...x, notes: e.target.value } : x,
-                          ),
-                        )
-                      }
-                    />
-                  </Td>
-                  <td className="border-b border-[var(--line)] px-2 py-1">
-                    <button
-                      type="button"
-                      className="text-xs text-red-700"
-                      onClick={() => removeRow(a.id)}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!assignments.length && (
-            <p className="mt-4 text-sm text-[var(--muted)]">
-              No assignments yet — add a row to start.
-            </p>
-          )}
-        </section>
+        <AssignmentSheet
+          assignments={assignments}
+          courses={courses}
+          onChangeLocal={(id, patch) =>
+            setAssignments((prev) =>
+              prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+            )
+          }
+          onPatch={patchAssignment}
+          onAddRow={addBlankRow}
+          onDelete={removeRow}
+          onBulk={bulkSave}
+          onMsg={setMsg}
+        />
       )}
 
       {view === "calendar" && (
@@ -608,33 +277,10 @@ export default function AssignmentsPage() {
           courses={courses}
           kanbanBy={kanbanBy}
           setKanbanBy={setKanbanBy}
-          onStatus={(id, status, title) =>
-            saveAssignment({ id, title, status })
-          }
+          onStatus={(id, status) => void patchAssignment({ id, status })}
         />
       )}
     </div>
-  );
-}
-
-function Td({
-  children,
-  active,
-  onSelect,
-}: {
-  children: React.ReactNode;
-  active?: boolean;
-  onSelect?: () => void;
-}) {
-  return (
-    <td
-      className={`border-b border-[var(--line)] px-2 py-1 ${
-        active ? "bg-[var(--accent-soft)] ring-1 ring-[var(--accent)]" : ""
-      }`}
-      onClick={onSelect}
-    >
-      {children}
-    </td>
   );
 }
 
@@ -746,7 +392,7 @@ function KanbanView({
   courses: Course[];
   kanbanBy: KanbanBy;
   setKanbanBy: (v: KanbanBy) => void;
-  onStatus: (id: string, status: AssignmentStatus, title: string) => void;
+  onStatus: (id: string, status: AssignmentStatus) => void;
 }) {
   const columns = useMemo(() => {
     if (kanbanBy === "status") {
@@ -824,7 +470,24 @@ function KanbanView({
                   key={a.id}
                   className="rounded-xl border border-[var(--line)] bg-white/80 p-3"
                 >
-                  <div className="text-sm font-medium">{a.title}</div>
+                  <div className="text-sm font-medium">
+                    {a.link ? (
+                      <a
+                        href={
+                          /^https?:\/\//i.test(a.link)
+                            ? a.link
+                            : `https://${a.link}`
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[var(--accent)] hover:underline"
+                      >
+                        {a.title}
+                      </a>
+                    ) : (
+                      a.title
+                    )}
+                  </div>
                   <div className="mt-1 text-xs text-[var(--muted)]">
                     {a.dueAt
                       ? new Date(a.dueAt).toLocaleString("en-US", {
@@ -840,11 +503,7 @@ function KanbanView({
                       className="mt-2 w-full rounded-lg border border-[var(--line)] bg-white px-2 py-1 text-xs"
                       value={a.status}
                       onChange={(e) =>
-                        onStatus(
-                          a.id,
-                          e.target.value as AssignmentStatus,
-                          a.title,
-                        )
+                        onStatus(a.id, e.target.value as AssignmentStatus)
                       }
                     >
                       {ASSIGNMENT_STATUSES.map((s) => (

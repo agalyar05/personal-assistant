@@ -329,6 +329,7 @@ function rowToAssignment(row: Record<string, unknown>): Assignment {
     pointsPossible:
       row.points_possible == null ? null : Number(row.points_possible),
     notes: String(row.notes || ""),
+    link: String(row.link || ""),
     sortOrder: Number(row.sort_order || 0),
     dueReminderSentFor: row.due_reminder_sent_for
       ? String(row.due_reminder_sent_for)
@@ -385,12 +386,51 @@ export async function getAssignments(): Promise<Assignment[]> {
 }
 
 export async function upsertAssignment(
-  input: Partial<Assignment> & { title: string },
+  input: Partial<Assignment> & { id?: string; title?: string },
 ): Promise<Assignment> {
   if (!hasSupabase()) return local.upsertAssignment(input);
   const sb = client();
+
+  // Partial update — never wipe other columns with defaults
+  if (input.id) {
+    const body: Record<string, unknown> = {};
+    if (input.title !== undefined) body.title = input.title;
+    if (input.courseId !== undefined) body.course_id = input.courseId;
+    if (input.status !== undefined) body.status = input.status;
+    if (input.dueAt !== undefined) body.due_at = input.dueAt;
+    if (input.assignmentType !== undefined) {
+      body.assignment_type = input.assignmentType;
+    }
+    if (input.difficulty !== undefined) body.difficulty = input.difficulty;
+    if (input.pointsEarned !== undefined) {
+      body.points_earned = input.pointsEarned;
+    }
+    if (input.pointsPossible !== undefined) {
+      body.points_possible = input.pointsPossible;
+    }
+    if (input.notes !== undefined) body.notes = input.notes;
+    if (input.link !== undefined) body.link = input.link;
+    if (input.sortOrder !== undefined) body.sort_order = input.sortOrder;
+    if (input.dueReminderSentFor !== undefined) {
+      body.due_reminder_sent_for = input.dueReminderSentFor;
+    }
+    const { data, error } = await sb
+      .from("assignments")
+      .update(body)
+      .eq("id", input.id)
+      .select("*")
+      .single();
+    if (error || !data) {
+      throw new Error(error?.message || "Failed to update assignment");
+    }
+    return rowToAssignment(data as Record<string, unknown>);
+  }
+
+  if (!input.title?.trim()) {
+    throw new Error("title required to create assignment");
+  }
   const body: Record<string, unknown> = {
-    title: input.title,
+    title: input.title.trim(),
     course_id: input.courseId ?? null,
     status: input.status ?? "not_started",
     due_at: input.dueAt ?? null,
@@ -399,13 +439,13 @@ export async function upsertAssignment(
     points_earned: input.pointsEarned ?? null,
     points_possible: input.pointsPossible ?? null,
     notes: input.notes ?? "",
+    link: input.link ?? "",
     sort_order: input.sortOrder ?? 0,
     due_reminder_sent_for: input.dueReminderSentFor ?? null,
   };
-  if (input.id) body.id = input.id;
   const { data, error } = await sb
     .from("assignments")
-    .upsert(body)
+    .insert(body)
     .select("*")
     .single();
   if (error || !data) {
@@ -421,7 +461,7 @@ export async function deleteAssignment(id: string): Promise<void> {
 }
 
 export async function bulkUpsertAssignments(
-  rows: (Partial<Assignment> & { title: string })[],
+  rows: (Partial<Assignment> & { title?: string; id?: string })[],
 ): Promise<Assignment[]> {
   if (!hasSupabase()) return local.bulkUpsertAssignments(rows);
   const out: Assignment[] = [];

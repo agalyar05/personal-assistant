@@ -69,6 +69,7 @@ export type Assignment = {
   pointsEarned: number | null;
   pointsPossible: number | null;
   notes: string;
+  link: string;
   sortOrder: number;
   dueReminderSentFor: string | null;
   createdAt: string;

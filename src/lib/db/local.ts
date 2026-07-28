@@ -41,7 +41,10 @@ async function readStore(): Promise<Store> {
       reminders: parsed.reminders || [],
       processedMessages: parsed.processedMessages || [],
       courses: parsed.courses || [],
-      assignments: parsed.assignments || [],
+      assignments: (parsed.assignments || []).map((a) => ({
+        ...a,
+        link: a.link || "",
+      })),
     };
   } catch {
     return structuredClone(DEFAULT_STORE);
@@ -320,7 +323,7 @@ export async function getAssignments(): Promise<Assignment[]> {
 }
 
 export async function upsertAssignment(
-  input: Partial<Assignment> & { title: string },
+  input: Partial<Assignment> & { id?: string; title?: string },
 ): Promise<Assignment> {
   const store = await readStore();
   if (input.id) {
@@ -331,10 +334,13 @@ export async function upsertAssignment(
       return store.assignments[idx]!;
     }
   }
+  if (!input.title?.trim()) {
+    throw new Error("title required to create assignment");
+  }
   const row: Assignment = {
     id: input.id || uid(),
     courseId: input.courseId ?? null,
-    title: input.title,
+    title: input.title.trim(),
     status: (input.status as AssignmentStatus) || "not_started",
     dueAt: input.dueAt ?? null,
     assignmentType: input.assignmentType || "Homework",
@@ -342,6 +348,7 @@ export async function upsertAssignment(
     pointsEarned: input.pointsEarned ?? null,
     pointsPossible: input.pointsPossible ?? null,
     notes: input.notes || "",
+    link: input.link || "",
     sortOrder:
       input.sortOrder ??
       store.assignments.reduce((m, a) => Math.max(m, a.sortOrder), 0) + 1,
@@ -360,7 +367,7 @@ export async function deleteAssignment(id: string): Promise<void> {
 }
 
 export async function bulkUpsertAssignments(
-  rows: (Partial<Assignment> & { title: string })[],
+  rows: (Partial<Assignment> & { title?: string; id?: string })[],
 ): Promise<Assignment[]> {
   const out: Assignment[] = [];
   for (const row of rows) out.push(await upsertAssignment(row));
