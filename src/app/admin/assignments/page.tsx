@@ -5,22 +5,18 @@ import type { Assignment, AssignmentStatus, Course } from "@/lib/types";
 import {
   ASSIGNMENT_DIFFICULTIES,
   ASSIGNMENT_STATUSES,
+  ASSIGNMENT_STATUS_LABELS,
+  isClosedAssignmentStatus,
+  isSubmittedStyle,
 } from "@/lib/types";
-import { ThemePicker, useUiTheme } from "@/components/ThemePicker";
 import { AssignmentSheet } from "@/components/AssignmentSheet";
 
-type View = "sheet" | "calendar" | "kanban";
+type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
 
-const STATUS_LABEL: Record<AssignmentStatus, string> = {
-  not_started: "Not started",
-  in_progress: "In progress",
-  submitted: "Submitted",
-  complete: "Complete",
-};
+const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 
 export default function AssignmentsPage() {
-  const { theme, saveTheme } = useUiTheme();
   const [view, setView] = useState<View>("sheet");
   const [kanbanBy, setKanbanBy] = useState<KanbanBy>("status");
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -29,11 +25,6 @@ export default function AssignmentsPage() {
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
-  const [courseForm, setCourseForm] = useState({
-    name: "",
-    code: "",
-    color: "#0f766e",
   });
 
   const load = useCallback(async () => {
@@ -67,20 +58,11 @@ export default function AssignmentsPage() {
       body: JSON.stringify(patch),
     });
     if (!res.ok) {
-      setMsg("Save failed");
+      setMsg("Save failed — reloading");
       await load();
-      return;
     }
-    const json = await res.json();
-    if (json.assignment) {
-      setAssignments((prev) =>
-        prev.map((a) =>
-          a.id === json.assignment.id
-            ? { ...json.assignment, link: json.assignment.link || "" }
-            : a,
-        ),
-      );
-    }
+    // Keep optimistic row as source of truth so blur→save doesn't remount
+    // the Class/Due controls mid-click.
   }
 
   async function addBlankRow() {
@@ -100,7 +82,7 @@ export default function AssignmentsPage() {
       setMsg("Could not add row");
       return;
     }
-    setMsg("Row added — edit title / use Fill down");
+    setMsg("Row added");
     await load();
   }
 
@@ -111,24 +93,6 @@ export default function AssignmentsPage() {
       body: JSON.stringify({ action: "delete", id }),
     });
     setAssignments((prev) => prev.filter((a) => a.id !== id));
-  }
-
-  async function addCourse() {
-    if (!courseForm.name.trim()) return;
-    const res = await fetch("/api/courses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(courseForm),
-    });
-    const json = await res.json();
-    if (json.course) {
-      setCourses((prev) => [...prev, json.course]);
-    } else {
-      const all = await fetch("/api/courses").then((r) => r.json());
-      setCourses(all.courses || []);
-    }
-    setCourseForm({ name: "", code: "", color: "#0f766e" });
-    setMsg("Class added");
   }
 
   async function bulkSave(
@@ -142,6 +106,14 @@ export default function AssignmentsPage() {
     await load();
   }
 
+  const views: [View, string][] = [
+    ["sheet", "Sheet"],
+    ["agenda", "Agenda"],
+    ["calendar", "Calendar"],
+    ["kanban", "Kanban"],
+    ["progress", "Progress"],
+  ];
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
@@ -149,18 +121,15 @@ export default function AssignmentsPage() {
           <div>
             <h2 className="display text-2xl">Assignments</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Spreadsheet-style grid — drag columns, fill down, link titles.
-              Text <code className="text-[var(--ink)]">due today</code>.
+              Manage coursework here. Classes live under{" "}
+              <a href="/admin/groups" className="text-[var(--accent)] underline">
+                Groups
+              </a>
+              . Text <code className="text-[var(--ink)]">due today</code>.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {(
-              [
-                ["sheet", "Sheet"],
-                ["calendar", "Calendar"],
-                ["kanban", "Kanban"],
-              ] as [View, string][]
-            ).map(([id, label]) => (
+            {views.map(([id, label]) => (
               <button
                 key={id}
                 type="button"
@@ -177,72 +146,6 @@ export default function AssignmentsPage() {
           </div>
         </div>
         {msg && <p className="mt-3 text-sm text-[var(--accent)]">{msg}</p>}
-      </section>
-
-      <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5">
-        <h3 className="text-sm font-medium uppercase tracking-wide text-[var(--muted)]">
-          Color palette
-        </h3>
-        <div className="mt-3">
-          <ThemePicker theme={theme} onChange={saveTheme} />
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5">
-        <h3 className="text-sm font-medium uppercase tracking-wide text-[var(--muted)]">
-          Classes
-        </h3>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {courses.map((c) => (
-            <span
-              key={c.id}
-              className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] px-3 py-1 text-sm"
-              style={{ borderColor: c.color }}
-            >
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ background: c.color }}
-              />
-              {c.code || c.name}
-            </span>
-          ))}
-          {!courses.length && (
-            <span className="text-sm text-[var(--muted)]">No classes yet</span>
-          )}
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <input
-            placeholder="Class name"
-            className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-            value={courseForm.name}
-            onChange={(e) =>
-              setCourseForm({ ...courseForm, name: e.target.value })
-            }
-          />
-          <input
-            placeholder="Code"
-            className="w-28 rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-            value={courseForm.code}
-            onChange={(e) =>
-              setCourseForm({ ...courseForm, code: e.target.value })
-            }
-          />
-          <input
-            type="color"
-            className="h-10 w-12 rounded border border-[var(--line)]"
-            value={courseForm.color}
-            onChange={(e) =>
-              setCourseForm({ ...courseForm, color: e.target.value })
-            }
-          />
-          <button
-            type="button"
-            onClick={() => void addCourse()}
-            className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
-          >
-            Add class
-          </button>
-        </div>
       </section>
 
       {view === "sheet" && (
@@ -262,6 +165,14 @@ export default function AssignmentsPage() {
         />
       )}
 
+      {view === "agenda" && (
+        <AgendaView
+          assignments={assignments}
+          courseMap={courseMap}
+          onStatus={(id, status) => void patchAssignment({ id, status })}
+        />
+      )}
+
       {view === "calendar" && (
         <CalendarView
           month={month}
@@ -271,16 +182,240 @@ export default function AssignmentsPage() {
         />
       )}
 
+      {view === "progress" && (
+        <ProgressView assignments={assignments} courses={courses} />
+      )}
+
       {view === "kanban" && (
         <KanbanView
           assignments={assignments}
           courses={courses}
           kanbanBy={kanbanBy}
           setKanbanBy={setKanbanBy}
-          onStatus={(id, status) => void patchAssignment({ id, status })}
+          onDropCard={(id, columnId) => {
+            if (kanbanBy === "status") {
+              void patchAssignment({
+                id,
+                status: columnId as AssignmentStatus,
+              });
+            } else if (kanbanBy === "difficulty") {
+              void patchAssignment({
+                id,
+                difficulty: columnId as Assignment["difficulty"],
+              });
+            } else {
+              void patchAssignment({
+                id,
+                courseId: columnId === "none" ? null : columnId,
+              });
+            }
+          }}
         />
       )}
     </div>
+  );
+}
+
+function AgendaView({
+  assignments,
+  courseMap,
+  onStatus,
+}: {
+  assignments: Assignment[];
+  courseMap: Map<string, Course>;
+  onStatus: (id: string, status: AssignmentStatus) => void;
+}) {
+  const open = assignments
+    .filter((a) => !isClosedAssignmentStatus(a.status) && a.dueAt)
+    .sort((a, b) => String(a.dueAt).localeCompare(String(b.dueAt)));
+  const undated = assignments.filter(
+    (a) => !isClosedAssignmentStatus(a.status) && !a.dueAt,
+  );
+
+  return (
+    <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5">
+      <h3 className="display text-xl">Upcoming</h3>
+      <ul className="mt-4 space-y-2">
+        {open.map((a) => {
+          const c = a.courseId ? courseMap.get(a.courseId) : null;
+          return (
+            <li
+              key={a.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white/70 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  {c && (
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ background: c.color }}
+                    />
+                  )}
+                  <span className="font-medium">
+                    {a.link ? (
+                      <a
+                        href={
+                          /^https?:\/\//i.test(a.link)
+                            ? a.link
+                            : `https://${a.link}`
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[var(--accent)] hover:underline"
+                      >
+                        {a.title}
+                      </a>
+                    ) : (
+                      a.title
+                    )}
+                  </span>
+                </div>
+                <div className="text-xs text-[var(--muted)]">
+                  {c?.code || c?.name || "General"} ·{" "}
+                  {a.dueAt
+                    ? new Date(a.dueAt).toLocaleString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })
+                    : ""}
+                </div>
+              </div>
+              <select
+                className="rounded-lg border border-[var(--line)] bg-white px-2 py-1 text-xs"
+                value={a.status}
+                onChange={(e) =>
+                  onStatus(a.id, e.target.value as AssignmentStatus)
+                }
+              >
+                {ASSIGNMENT_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABEL[s]}
+                  </option>
+                ))}
+              </select>
+            </li>
+          );
+        })}
+        {!open.length && (
+          <li className="text-sm text-[var(--muted)]">Nothing upcoming.</li>
+        )}
+      </ul>
+      {undated.length > 0 && (
+        <>
+          <h4 className="mt-6 text-sm font-medium text-[var(--muted)]">
+            No due date
+          </h4>
+          <ul className="mt-2 space-y-1 text-sm">
+            {undated.map((a) => (
+              <li key={a.id}>{a.title}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ProgressView({
+  assignments,
+  courses,
+}: {
+  assignments: Assignment[];
+  courses: Course[];
+}) {
+  const [sortBy, setSortBy] = useState<
+    "name" | "percent" | "remaining" | "total"
+  >("percent");
+
+  const cards = courses.map((c) => {
+    const mine = assignments.filter((a) => a.courseId === c.id);
+    const countable = mine.filter((a) => a.status !== "n_a");
+    const done = countable.filter(
+      (a) => a.status === "complete" || a.status === "submitted",
+    ).length;
+    const remaining = countable.length - done;
+    const pct = countable.length
+      ? Math.round((done / countable.length) * 100)
+      : 0;
+    return { course: c, mine, done, remaining, pct, total: countable.length };
+  });
+
+  cards.sort((a, b) => {
+    if (sortBy === "name") {
+      return (a.course.code || a.course.name).localeCompare(
+        b.course.code || b.course.name,
+      );
+    }
+    if (sortBy === "percent") return b.pct - a.pct;
+    if (sortBy === "remaining") return b.remaining - a.remaining;
+    return b.total - a.total;
+  });
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm text-[var(--muted)]">Sort by</span>
+        {(
+          [
+            ["percent", "% complete"],
+            ["remaining", "Remaining"],
+            ["total", "Total"],
+            ["name", "Name"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setSortBy(id)}
+            className={`rounded-full px-3 py-1.5 text-sm ${
+              sortBy === id
+                ? "bg-[var(--accent)] text-white"
+                : "border border-[var(--line)] bg-[var(--card)]"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {cards.map(({ course: c, done, total, pct }) => (
+          <div
+            key={c.id}
+            className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5"
+            style={{ borderTopColor: c.color, borderTopWidth: 3 }}
+          >
+            <div className="flex items-center gap-2">
+              <span
+                className="h-3 w-3 rounded-full"
+                style={{ background: c.color }}
+              />
+              <h3 className="font-medium">{c.code || c.name}</h3>
+            </div>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {c.professor || c.schedule || c.name}
+            </p>
+            <p className="mt-4 text-2xl font-medium tabular-nums">{pct}%</p>
+            <p className="text-sm text-[var(--muted)]">
+              {done} / {total} complete or submitted
+            </p>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--line)]">
+              <div
+                className="h-full rounded-full"
+                style={{ width: `${pct}%`, background: c.color }}
+              />
+            </div>
+          </div>
+        ))}
+        {!courses.length && (
+          <p className="text-sm text-[var(--muted)]">
+            Add classes in Groups to see progress cards.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -307,54 +442,53 @@ function CalendarView({
 
   function itemsForDay(day: number) {
     return assignments.filter((a) => {
-      if (!a.dueAt) return false;
+      if (!a.dueAt || isClosedAssignmentStatus(a.status)) return false;
       const d = new Date(a.dueAt);
       return (
         d.getFullYear() === year &&
         d.getMonth() === mo &&
-        d.getDate() === day &&
-        a.status !== "complete"
+        d.getDate() === day
       );
     });
   }
 
   return (
-    <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5">
-      <div className="mb-4 flex items-center justify-between">
+    <section className="w-full">
+      <div className="mb-4 flex items-center justify-between px-1">
         <button
           type="button"
-          className="rounded-lg border border-[var(--line)] px-3 py-1 text-sm"
+          className="rounded-lg px-3 py-1 text-sm text-[var(--muted)] hover:bg-black/5"
           onClick={() => setMonth(new Date(year, mo - 1, 1))}
         >
           ←
         </button>
-        <h3 className="display text-xl">
+        <h3 className="display text-2xl">
           {month.toLocaleString("en-US", { month: "long", year: "numeric" })}
         </h3>
         <button
           type="button"
-          className="rounded-lg border border-[var(--line)] px-3 py-1 text-sm"
+          className="rounded-lg px-3 py-1 text-sm text-[var(--muted)] hover:bg-black/5"
           onClick={() => setMonth(new Date(year, mo + 1, 1))}
         >
           →
         </button>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-center text-xs text-[var(--muted)]">
+      <div className="grid grid-cols-7 gap-px text-center text-xs text-[var(--muted)]">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="py-1 font-medium">
+          <div key={d} className="py-2 font-medium">
             {d}
           </div>
         ))}
       </div>
-      <div className="mt-1 grid grid-cols-7 gap-1">
+      <div className="grid min-h-[70vh] grid-cols-7 gap-px bg-[var(--line)]">
         {cells.map((day, i) => (
           <div
             key={i}
-            className="min-h-24 rounded-xl border border-[var(--line)] bg-white/60 p-1.5 text-left"
+            className="min-h-[7.5rem] bg-[var(--bg)] p-2 text-left sm:min-h-[9rem]"
           >
             {day && (
               <>
-                <div className="text-xs font-medium text-[var(--muted)]">
+                <div className="text-sm font-medium text-[var(--muted)]">
                   {day}
                 </div>
                 <div className="mt-1 space-y-1">
@@ -363,7 +497,7 @@ function CalendarView({
                     return (
                       <div
                         key={a.id}
-                        className="truncate rounded px-1 py-0.5 text-[10px] text-white"
+                        className="truncate rounded px-1.5 py-1 text-[11px] text-white"
                         style={{ background: c?.color || "var(--accent)" }}
                         title={a.title}
                       >
@@ -386,14 +520,17 @@ function KanbanView({
   courses,
   kanbanBy,
   setKanbanBy,
-  onStatus,
+  onDropCard,
 }: {
   assignments: Assignment[];
   courses: Course[];
   kanbanBy: KanbanBy;
   setKanbanBy: (v: KanbanBy) => void;
-  onStatus: (id: string, status: AssignmentStatus) => void;
+  onDropCard: (id: string, columnId: string) => void;
 }) {
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overCol, setOverCol] = useState<string | null>(null);
+
   const columns = useMemo(() => {
     if (kanbanBy === "status") {
       return ASSIGNMENT_STATUSES.map((s) => ({
@@ -429,7 +566,7 @@ function KanbanView({
       <div className="flex flex-wrap gap-2">
         {(
           [
-            ["status", "By status"],
+            ["status", "By progress"],
             ["class", "By class"],
             ["difficulty", "By difficulty"],
           ] as [KanbanBy, string][]
@@ -447,12 +584,31 @@ function KanbanView({
             {label}
           </button>
         ))}
+        <span className="self-center text-xs text-[var(--muted)]">
+          Drag cards between columns to update the sheet
+        </span>
       </div>
       <div className="flex gap-3 overflow-x-auto pb-2">
         {columns.map((col) => (
           <div
             key={col.id}
-            className="w-64 shrink-0 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-3"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setOverCol(col.id);
+            }}
+            onDragLeave={() => setOverCol((c) => (c === col.id ? null : c))}
+            onDrop={(e) => {
+              e.preventDefault();
+              const id = e.dataTransfer.getData("text/assignment-id") || dragId;
+              if (id) onDropCard(id, col.id);
+              setDragId(null);
+              setOverCol(null);
+            }}
+            className={`w-72 shrink-0 rounded-2xl border bg-[var(--card)] p-3 ${
+              overCol === col.id
+                ? "border-[var(--accent)] bg-[var(--accent-soft)]/40"
+                : "border-[var(--line)]"
+            }`}
           >
             <div className="mb-2 flex items-center gap-2 text-sm font-medium">
               {"color" in col && col.color && (
@@ -464,31 +620,28 @@ function KanbanView({
               {col.label}
               <span className="text-[var(--muted)]">({col.items.length})</span>
             </div>
-            <div className="space-y-2">
+            <div className="min-h-24 space-y-2">
               {col.items.map((a) => (
                 <div
                   key={a.id}
-                  className="rounded-xl border border-[var(--line)] bg-white/80 p-3"
+                  draggable
+                  onDragStart={(e) => {
+                    setDragId(a.id);
+                    e.dataTransfer.setData("text/assignment-id", a.id);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragEnd={() => {
+                    setDragId(null);
+                    setOverCol(null);
+                  }}
+                  className={`cursor-grab rounded-xl border border-[var(--line)] bg-white/90 p-3 active:cursor-grabbing ${
+                    isSubmittedStyle(a.status)
+                      ? "bg-stone-100 text-[var(--muted)] line-through opacity-70"
+                      : ""
+                  } ${dragId === a.id ? "opacity-50" : ""}`}
                 >
-                  <div className="text-sm font-medium">
-                    {a.link ? (
-                      <a
-                        href={
-                          /^https?:\/\//i.test(a.link)
-                            ? a.link
-                            : `https://${a.link}`
-                        }
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[var(--accent)] hover:underline"
-                      >
-                        {a.title}
-                      </a>
-                    ) : (
-                      a.title
-                    )}
-                  </div>
-                  <div className="mt-1 text-xs text-[var(--muted)]">
+                  <div className="text-sm font-medium">{a.title}</div>
+                  <div className="mt-1 text-xs text-[var(--muted)] no-underline">
                     {a.dueAt
                       ? new Date(a.dueAt).toLocaleString("en-US", {
                           month: "short",
@@ -498,25 +651,12 @@ function KanbanView({
                         })
                       : "No due date"}
                   </div>
-                  {kanbanBy !== "status" && (
-                    <select
-                      className="mt-2 w-full rounded-lg border border-[var(--line)] bg-white px-2 py-1 text-xs"
-                      value={a.status}
-                      onChange={(e) =>
-                        onStatus(a.id, e.target.value as AssignmentStatus)
-                      }
-                    >
-                      {ASSIGNMENT_STATUSES.map((s) => (
-                        <option key={s} value={s}>
-                          {STATUS_LABEL[s]}
-                        </option>
-                      ))}
-                    </select>
-                  )}
                 </div>
               ))}
               {!col.items.length && (
-                <p className="text-xs text-[var(--muted)]">Empty</p>
+                <p className="py-6 text-center text-xs text-[var(--muted)]">
+                  Drop here
+                </p>
               )}
             </div>
           </div>

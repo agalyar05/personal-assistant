@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { UiThemeSettings } from "@/lib/types";
+import { DEFAULT_THEME_CUSTOM } from "@/lib/types";
+import { ThemePicker, useUiTheme } from "@/components/ThemePicker";
 
 type Settings = {
   timezone: string;
@@ -8,6 +11,7 @@ type Settings = {
   morningBriefingTime: string;
   weeklyBriefingDay: string;
   weeklyBriefingTime: string;
+  uiTheme: UiThemeSettings;
   cronControl: {
     mode: "off" | "always" | "window";
     timezone: string;
@@ -19,13 +23,21 @@ type Settings = {
 };
 
 export default function SettingsPage() {
+  const { theme, saveTheme } = useUiTheme();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [saved, setSaved] = useState("");
 
   async function load() {
     const res = await fetch("/api/settings");
     const json = await res.json();
-    setSettings(json.settings);
+    setSettings({
+      ...json.settings,
+      uiTheme: json.settings?.uiTheme || {
+        id: "harbor",
+        custom: { ...DEFAULT_THEME_CUSTOM },
+      },
+      weatherCity: json.settings?.weatherCity || "Detroit",
+    });
   }
 
   useEffect(() => {
@@ -39,7 +51,11 @@ export default function SettingsPage() {
       body: JSON.stringify(patch),
     });
     const json = await res.json();
-    setSettings(json.settings);
+    setSettings({
+      ...json.settings,
+      uiTheme: json.settings?.uiTheme || theme,
+      weatherCity: json.settings?.weatherCity || "Detroit",
+    });
     setSaved("Saved");
     setTimeout(() => setSaved(""), 2000);
   }
@@ -50,6 +66,25 @@ export default function SettingsPage() {
 
   return (
     <section className="space-y-6">
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
+        <h2 className="display text-2xl">Color palette</h2>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Theme for the whole dashboard. Class color suggestions in Groups
+          follow this vibe.
+        </p>
+        <div className="mt-4">
+          <ThemePicker
+            theme={theme}
+            onChange={async (next) => {
+              await saveTheme(next);
+              setSettings({ ...settings, uiTheme: next });
+              setSaved("Saved");
+              setTimeout(() => setSaved(""), 2000);
+            }}
+          />
+        </div>
+      </div>
+
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
         <h2 className="display text-2xl">Timezone & briefing</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -89,7 +124,7 @@ export default function SettingsPage() {
         </div>
         <button
           type="button"
-          className="mt-4 rounded-xl bg-teal-800 px-4 py-2 text-sm text-white"
+          className="mt-4 rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
           onClick={() =>
             save({
               timezone: settings.timezone,
@@ -122,7 +157,7 @@ export default function SettingsPage() {
               }
               className={`rounded-full px-3 py-1.5 text-sm ${
                 cc.mode === mode
-                  ? "bg-teal-800 text-white"
+                  ? "bg-[var(--accent)] text-white"
                   : "border border-[var(--line)] bg-white"
               }`}
             >
@@ -161,7 +196,7 @@ export default function SettingsPage() {
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded-xl bg-teal-800 px-4 py-2 text-sm text-white"
+            className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
             onClick={() => save({ cronControl: cc })}
           >
             Save cron
@@ -182,7 +217,7 @@ export default function SettingsPage() {
           </button>
         </div>
         {cc.liveUntil && (
-          <p className="mt-3 text-sm text-teal-900">
+          <p className="mt-3 text-sm text-[var(--accent)]">
             Live until {new Date(cc.liveUntil).toLocaleString()}
           </p>
         )}

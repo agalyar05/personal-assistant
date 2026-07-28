@@ -36,6 +36,10 @@ async function readStore(): Promise<Store> {
             ...(parsed.settings?.uiTheme?.custom || {}),
           },
         },
+        listCatalog:
+          parsed.settings?.listCatalog?.length
+            ? parsed.settings.listCatalog
+            : DEFAULT_STORE.settings.listCatalog,
       },
       listItems: parsed.listItems || [],
       reminders: parsed.reminders || [],
@@ -99,6 +103,9 @@ export async function addListItems(
   texts: string[],
 ): Promise<{ added: ListItem[]; skipped: string[] }> {
   const store = await readStore();
+  if (!store.settings.listCatalog.includes(listName)) {
+    store.settings.listCatalog = [...store.settings.listCatalog, listName].sort();
+  }
   const existing = store.listItems.filter(
     (i) => i.listName === listName && !i.checked,
   );
@@ -195,6 +202,56 @@ export async function clearList(listName: string): Promise<number> {
   store.listItems = store.listItems.filter((i) => i.listName !== listName);
   await writeStore(store);
   return before - store.listItems.length;
+}
+
+export async function getListNames(): Promise<string[]> {
+  const store = await readStore();
+  const names = new Set<string>([
+    ...store.settings.listCatalog,
+    ...store.listItems.map((i) => i.listName),
+  ]);
+  return [...names].filter(Boolean).sort();
+}
+
+export async function createList(listName: string): Promise<string[]> {
+  const store = await readStore();
+  const name = listName.trim().toLowerCase();
+  if (!name) return getListNames();
+  store.settings.listCatalog = Array.from(
+    new Set([...(store.settings.listCatalog || []), name]),
+  ).sort();
+  await writeStore(store);
+  return getListNames();
+}
+
+export async function renameList(from: string, to: string): Promise<string[]> {
+  const store = await readStore();
+  const oldName = from.trim().toLowerCase();
+  const newName = to.trim().toLowerCase();
+  if (!oldName || !newName || oldName === newName) return getListNames();
+  for (const item of store.listItems) {
+    if (item.listName === oldName) item.listName = newName;
+  }
+  store.settings.listCatalog = Array.from(
+    new Set(
+      (store.settings.listCatalog || [])
+        .map((n) => (n === oldName ? newName : n))
+        .concat(newName),
+    ),
+  ).sort();
+  await writeStore(store);
+  return getListNames();
+}
+
+export async function deleteList(listName: string): Promise<string[]> {
+  const store = await readStore();
+  const name = listName.trim().toLowerCase();
+  store.listItems = store.listItems.filter((i) => i.listName !== name);
+  store.settings.listCatalog = (store.settings.listCatalog || []).filter(
+    (n) => n !== name,
+  );
+  await writeStore(store);
+  return getListNames();
 }
 
 export async function getReminders(): Promise<Reminder[]> {

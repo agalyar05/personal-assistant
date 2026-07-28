@@ -1,5 +1,6 @@
 import * as db from "./db";
 import type { Assignment } from "./types";
+import { isClosedAssignmentStatus } from "./types";
 
 export function statusLabel(status: Assignment["status"]): string {
   return status.replace(/_/g, " ");
@@ -30,7 +31,7 @@ export async function formatDueSummary(
 
   const items = assignments
     .filter((a) => {
-      if (!a.dueAt || a.status === "complete") return false;
+      if (!a.dueAt || isClosedAssignmentStatus(a.status)) return false;
       const dueWall = new Date(
         new Date(a.dueAt).toLocaleString("en-US", { timeZone: timezone }),
       );
@@ -71,6 +72,8 @@ export async function formatDueSummary(
 
 export function courseProgress(courseId: string, assignments: Assignment[]) {
   const mine = assignments.filter((a) => a.courseId === courseId);
-  const done = mine.filter((a) => a.status === "complete").length;
+  const done = mine.filter(
+    (a) => a.status === "complete" || a.status === "submitted",
+  ).length;
   return { total: mine.length, completed: done };
 }

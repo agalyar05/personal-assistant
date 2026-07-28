@@ -6,6 +6,9 @@ export async function GET() {
   const listItems = (await db.getListItems()).filter((i) => !i.checked);
   const reminders = await db.getReminders();
   const byList: Record<string, number> = {};
+  for (const name of settings.listCatalog || []) {
+    byList[name] = 0;
+  }
   for (const i of listItems) {
     byList[i.listName] = (byList[i.listName] || 0) + 1;
   }

@@ -16,6 +16,8 @@ import type {
 import {
   ASSIGNMENT_DIFFICULTIES,
   ASSIGNMENT_STATUSES,
+  ASSIGNMENT_STATUS_LABELS,
+  isSubmittedStyle,
 } from "@/lib/types";
 
 export type ColKey =
@@ -34,7 +36,7 @@ const COL_META: { key: ColKey; label: string; width: string }[] = [
   { key: "title", label: "Title", width: "min-w-[180px]" },
   { key: "link", label: "Link", width: "min-w-[160px]" },
   { key: "courseId", label: "Class", width: "min-w-[120px]" },
-  { key: "status", label: "Status", width: "min-w-[130px]" },
+  { key: "status", label: "Progress", width: "min-w-[140px]" },
   { key: "dueAt", label: "Due", width: "min-w-[190px]" },
   { key: "assignmentType", label: "Type", width: "min-w-[110px]" },
   { key: "difficulty", label: "Difficulty", width: "min-w-[110px]" },
@@ -43,12 +45,7 @@ const COL_META: { key: ColKey; label: string; width: string }[] = [
   { key: "notes", label: "Notes", width: "min-w-[140px]" },
 ];
 
-const STATUS_LABEL: Record<AssignmentStatus, string> = {
-  not_started: "Not started",
-  in_progress: "In progress",
-  submitted: "Submitted",
-  complete: "Complete",
-};
+const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 
 const STORAGE_KEY = "pa_assignment_columns";
 
@@ -219,41 +216,43 @@ export function AssignmentSheet({
 
     switch (col) {
       case "title": {
-        const href = a.link || extractUrl(a.title);
-        const showLink =
-          href && editingTitleId !== a.id && selected?.rowId !== a.id;
+        const href = a.link.trim() || extractUrl(a.title);
         return wrap(
-          showLink ? (
-            <a
-              href={normalizeUrl(href)}
-              target="_blank"
-              rel="noreferrer"
-              className="block truncate text-[var(--accent)] underline-offset-2 hover:underline"
-              onClick={(e) => e.stopPropagation()}
-              onDoubleClick={(e) => {
-                e.preventDefault();
+          <div className="flex min-w-0 items-center gap-1">
+            <input
+              className="min-w-0 flex-1 bg-transparent py-1 outline-none"
+              value={a.title}
+              onChange={(e) => onChangeLocal(a.id, { title: e.target.value })}
+              onFocus={() => {
                 setEditingTitleId(a.id);
                 setSelected({ rowId: a.id, col: "title" });
               }}
-              title="Double-click to edit title"
-            >
-              {a.title}
-            </a>
-          ) : (
-            <input
-              className="w-full bg-transparent py-1 outline-none"
-              value={a.title}
-              autoFocus={editingTitleId === a.id}
-              onChange={(e) => onChangeLocal(a.id, { title: e.target.value })}
-              onBlur={() => {
+              onBlur={(e) => {
                 setEditingTitleId(null);
-                void onPatch({ id: a.id, title: a.title || "Untitled" });
+                const next = e.target.value.trim() || "Untitled";
+                // Defer so Class/Due click registers before React re-renders
+                window.setTimeout(() => {
+                  void onPatch({ id: a.id, title: next });
+                }, 50);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") (e.target as HTMLInputElement).blur();
               }}
             />
-          ),
+            {href && (
+              <a
+                href={normalizeUrl(href)}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 text-[var(--accent)]"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => e.stopPropagation()}
+                title="Open link"
+              >
+                ↗
+              </a>
+            )}
+          </div>,
         );
       }
       case "link":
@@ -264,20 +263,13 @@ export function AssignmentSheet({
               placeholder="https://…"
               value={a.link}
               onChange={(e) => onChangeLocal(a.id, { link: e.target.value })}
-              onBlur={() => void onPatch({ id: a.id, link: a.link })}
+              onBlur={(e) => {
+                const next = e.target.value;
+                window.setTimeout(() => {
+                  void onPatch({ id: a.id, link: next });
+                }, 50);
+              }}
             />
-            {a.link.trim() && (
-              <a
-                href={normalizeUrl(a.link)}
-                target="_blank"
-                rel="noreferrer"
-                className="shrink-0 text-[var(--accent)]"
-                onClick={(e) => e.stopPropagation()}
-                title="Open link"
-              >
-                ↗
-              </a>
-            )}
           </div>,
         );
       case "courseId":
@@ -285,6 +277,7 @@ export function AssignmentSheet({
           <select
             className="w-full bg-transparent py-1 outline-none"
             value={a.courseId || ""}
+            onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) =>
               void onPatch({ id: a.id, courseId: e.target.value || null })
             }
@@ -302,6 +295,7 @@ export function AssignmentSheet({
           <select
             className="w-full bg-transparent py-1 outline-none"
             value={a.status}
+            onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) =>
               void onPatch({
                 id: a.id,
@@ -322,6 +316,7 @@ export function AssignmentSheet({
             type="datetime-local"
             className="w-full bg-transparent py-1 outline-none"
             value={toInputDateTime(a.dueAt)}
+            onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) =>
               void onPatch({
                 id: a.id,
@@ -338,9 +333,12 @@ export function AssignmentSheet({
             onChange={(e) =>
               onChangeLocal(a.id, { assignmentType: e.target.value })
             }
-            onBlur={() =>
-              void onPatch({ id: a.id, assignmentType: a.assignmentType })
-            }
+            onBlur={(e) => {
+              const next = e.target.value;
+              window.setTimeout(() => {
+                void onPatch({ id: a.id, assignmentType: next });
+              }, 50);
+            }}
           />,
         );
       case "difficulty":
@@ -396,7 +394,12 @@ export function AssignmentSheet({
             className="w-full bg-transparent py-1 outline-none"
             value={a.notes}
             onChange={(e) => onChangeLocal(a.id, { notes: e.target.value })}
-            onBlur={() => void onPatch({ id: a.id, notes: a.notes })}
+            onBlur={(e) => {
+              const next = e.target.value;
+              window.setTimeout(() => {
+                void onPatch({ id: a.id, notes: next });
+              }, 50);
+            }}
           />,
         );
       default:
@@ -473,12 +476,20 @@ export function AssignmentSheet({
           </thead>
           <tbody>
             {assignments.map((a) => (
-              <tr key={a.id} className="hover:bg-black/[0.02]">
+              <tr
+                key={a.id}
+                className={`hover:bg-black/[0.02] ${
+                  isSubmittedStyle(a.status)
+                    ? "bg-stone-100/80 text-[var(--muted)] line-through opacity-70"
+                    : ""
+                }`}
+              >
                 {cols.map((col) => renderCell(a, col))}
                 <td className="border-b border-[var(--line)] px-2 py-1">
                   <button
                     type="button"
-                    className="text-xs text-red-700"
+                    className="text-xs text-red-700 no-underline"
+                    style={{ textDecoration: "none" }}
                     onClick={() => void onDelete(a.id)}
                   >
                     Delete

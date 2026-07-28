@@ -73,3 +73,74 @@ export function themeToCssVars(colors: ThemeColors): Record<string, string> {
     "--line": colors.line,
   };
 }
+
+/** Distinct class/chip colors tuned to each UI theme vibe. */
+export const CLASS_COLOR_SUGGESTIONS: Record<
+  ThemeId,
+  { hex: string; label: string }[]
+> = {
+  harbor: [
+    { hex: "#0f766e", label: "Teal" },
+    { hex: "#0369a1", label: "Ocean" },
+    { hex: "#4f46e5", label: "Indigo" },
+    { hex: "#7c3aed", label: "Violet" },
+    { hex: "#be185d", label: "Rose" },
+    { hex: "#c2410c", label: "Clay" },
+    { hex: "#a16207", label: "Amber" },
+    { hex: "#15803d", label: "Forest" },
+    { hex: "#0e7490", label: "Cyan" },
+    { hex: "#334155", label: "Slate" },
+  ],
+  meadow: [
+    { hex: "#4d7c0f", label: "Leaf" },
+    { hex: "#15803d", label: "Moss" },
+    { hex: "#0f766e", label: "Pine" },
+    { hex: "#a16207", label: "Honey" },
+    { hex: "#b45309", label: "Rust" },
+    { hex: "#9f1239", label: "Berry" },
+    { hex: "#6d28d9", label: "Plum" },
+    { hex: "#1d4ed8", label: "Bluebell" },
+    { hex: "#0e7490", label: "Stream" },
+    { hex: "#3f6212", label: "Olive" },
+  ],
+  sunset: [
+    { hex: "#c2410c", label: "Ember" },
+    { hex: "#ea580c", label: "Flame" },
+    { hex: "#b45309", label: "Copper" },
+    { hex: "#be123c", label: "Crimson" },
+    { hex: "#9f1239", label: "Wine" },
+    { hex: "#7e22ce", label: "Fig" },
+    { hex: "#1d4ed8", label: "Dusk" },
+    { hex: "#0f766e", label: "Lagoon" },
+    { hex: "#a16207", label: "Gold" },
+    { hex: "#44403c", label: "Char" },
+  ],
+  slate: [
+    { hex: "#334155", label: "Steel" },
+    { hex: "#0f766e", label: "Teal" },
+    { hex: "#1d4ed8", label: "Cobalt" },
+    { hex: "#6d28d9", label: "Iris" },
+    { hex: "#be185d", label: "Magenta" },
+    { hex: "#c2410c", label: "Rust" },
+    { hex: "#a16207", label: "Brass" },
+    { hex: "#15803d", label: "Green" },
+    { hex: "#0e7490", label: "Aqua" },
+    { hex: "#64748b", label: "Fog" },
+  ],
+  custom: [
+    { hex: "#0f766e", label: "Teal" },
+    { hex: "#1d4ed8", label: "Blue" },
+    { hex: "#7c3aed", label: "Purple" },
+    { hex: "#be185d", label: "Pink" },
+    { hex: "#c2410c", label: "Orange" },
+    { hex: "#a16207", label: "Gold" },
+    { hex: "#15803d", label: "Green" },
+    { hex: "#0e7490", label: "Cyan" },
+    { hex: "#334155", label: "Slate" },
+    { hex: "#9f1239", label: "Red" },
+  ],
+};
+
+export function classColorsForTheme(themeId: ThemeId) {
+  return CLASS_COLOR_SUGGESTIONS[themeId] || CLASS_COLOR_SUGGESTIONS.harbor;
+}

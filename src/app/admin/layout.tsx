@@ -6,6 +6,7 @@ import { useUiTheme } from "@/components/ThemePicker";
 const NAV = [
   { href: "/admin", label: "Home" },
   { href: "/admin/assignments", label: "Assignments" },
+  { href: "/admin/groups", label: "Groups" },
   { href: "/admin/lists", label: "Lists" },
   { href: "/admin/reminders", label: "Reminders" },
   { href: "/admin/settings", label: "Settings" },

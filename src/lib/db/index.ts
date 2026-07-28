@@ -54,6 +54,10 @@ export async function getSettings(): Promise<AppSettings> {
         ...(payload.uiTheme?.custom || {}),
       },
     },
+    listCatalog:
+      payload.listCatalog && payload.listCatalog.length
+        ? payload.listCatalog
+        : DEFAULT_SETTINGS.listCatalog,
   };
 }
 
@@ -105,6 +109,12 @@ export async function addListItems(
   texts: string[],
 ): Promise<{ added: ListItem[]; skipped: string[] }> {
   if (!hasSupabase()) return local.addListItems(listName, texts);
+  const settings = await getSettings();
+  if (!settings.listCatalog.includes(listName)) {
+    await updateSettings({
+      listCatalog: [...settings.listCatalog, listName].sort(),
+    });
+  }
   const existing = await getListItems(listName);
   const seen = new Set(
     existing.filter((i) => !i.checked).map((i) => i.text.toLowerCase()),
@@ -189,6 +199,64 @@ export async function clearList(listName: string): Promise<number> {
   const sb = client();
   await sb.from("list_items").delete().eq("list_name", listName);
   return items.length;
+}
+
+export async function getListNames(): Promise<string[]> {
+  if (!hasSupabase()) return local.getListNames();
+  const settings = await getSettings();
+  const items = await getListItems();
+  const names = new Set<string>([
+    ...settings.listCatalog,
+    ...items.map((i) => i.listName),
+  ]);
+  return [...names].filter(Boolean).sort();
+}
+
+export async function createList(listName: string): Promise<string[]> {
+  if (!hasSupabase()) return local.createList(listName);
+  const settings = await getSettings();
+  const name = listName.trim().toLowerCase();
+  if (!name) return getListNames();
+  const catalog = Array.from(
+    new Set([...(settings.listCatalog || []), name]),
+  ).sort();
+  await updateSettings({ listCatalog: catalog });
+  return getListNames();
+}
+
+export async function renameList(
+  from: string,
+  to: string,
+): Promise<string[]> {
+  if (!hasSupabase()) return local.renameList(from, to);
+  const oldName = from.trim().toLowerCase();
+  const newName = to.trim().toLowerCase();
+  if (!oldName || !newName || oldName === newName) return getListNames();
+  const sb = client();
+  await sb
+    .from("list_items")
+    .update({ list_name: newName })
+    .eq("list_name", oldName);
+  const settings = await getSettings();
+  const catalog = Array.from(
+    new Set(
+      (settings.listCatalog || [])
+        .map((n) => (n === oldName ? newName : n))
+        .concat(newName),
+    ),
+  ).sort();
+  await updateSettings({ listCatalog: catalog });
+  return getListNames();
+}
+
+export async function deleteList(listName: string): Promise<string[]> {
+  if (!hasSupabase()) return local.deleteList(listName);
+  const name = listName.trim().toLowerCase();
+  await clearList(name);
+  const settings = await getSettings();
+  const catalog = (settings.listCatalog || []).filter((n) => n !== name);
+  await updateSettings({ listCatalog: catalog });
+  return getListNames();
 }
 
 export async function getReminders(): Promise<Reminder[]> {

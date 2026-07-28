@@ -37,13 +37,15 @@ export type AppSettings = {
   googleVoiceReply: string | null;
   cronControl: CronControlSettings;
   uiTheme: UiThemeSettings;
+  listCatalog: string[];
 };
 
 export type AssignmentStatus =
   | "not_started"
   | "in_progress"
+  | "complete"
   | "submitted"
-  | "complete";
+  | "n_a";
 
 export type AssignmentDifficulty = "easy" | "medium" | "hard";
 
@@ -144,6 +146,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     id: "harbor",
     custom: { ...DEFAULT_THEME_CUSTOM },
   },
+  listCatalog: ["todo", "groceries", "notes", "bhangra"],
 };
 
 export const DEFAULT_STORE: Store = {
@@ -158,9 +161,27 @@ export const DEFAULT_STORE: Store = {
 export const ASSIGNMENT_STATUSES: AssignmentStatus[] = [
   "not_started",
   "in_progress",
-  "submitted",
   "complete",
+  "submitted",
+  "n_a",
 ];
+
+export const ASSIGNMENT_STATUS_LABELS: Record<AssignmentStatus, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  complete: "Complete",
+  submitted: "Submitted",
+  n_a: "N/A",
+};
+
+/** Hide from agenda / due / active calendar. */
+export function isClosedAssignmentStatus(status: AssignmentStatus): boolean {
+  return status === "complete" || status === "submitted" || status === "n_a";
+}
+
+export function isSubmittedStyle(status: AssignmentStatus): boolean {
+  return status === "submitted";
+}
 
 export const ASSIGNMENT_DIFFICULTIES: AssignmentDifficulty[] = [
   "easy",
