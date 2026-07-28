@@ -1,20 +1,47 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { DEFAULT_STORE, type AppSettings, type ListItem, type Reminder, type Store } from "../types";
+import {
+  DEFAULT_STORE,
+  type AppSettings,
+  type Assignment,
+  type AssignmentDifficulty,
+  type AssignmentStatus,
+  type Course,
+  type ListItem,
+  type Reminder,
+  type Store,
+} from "../types";
 
 const DATA_PATH = path.join(process.cwd(), "data", "store.json");
 
 async function readStore(): Promise<Store> {
   try {
     const raw = await fs.readFile(DATA_PATH, "utf8");
-    const parsed = JSON.parse(raw) as Store;
+    const parsed = JSON.parse(raw) as Partial<Store>;
     return {
       ...DEFAULT_STORE,
       ...parsed,
-      settings: { ...DEFAULT_STORE.settings, ...parsed.settings },
+      settings: {
+        ...DEFAULT_STORE.settings,
+        ...parsed.settings,
+        cronControl: {
+          ...DEFAULT_STORE.settings.cronControl,
+          ...(parsed.settings?.cronControl || {}),
+        },
+        uiTheme: {
+          ...DEFAULT_STORE.settings.uiTheme,
+          ...(parsed.settings?.uiTheme || {}),
+          custom: {
+            ...DEFAULT_STORE.settings.uiTheme.custom,
+            ...(parsed.settings?.uiTheme?.custom || {}),
+          },
+        },
+      },
       listItems: parsed.listItems || [],
       reminders: parsed.reminders || [],
       processedMessages: parsed.processedMessages || [],
+      courses: parsed.courses || [],
+      assignments: parsed.assignments || [],
     };
   } catch {
     return structuredClone(DEFAULT_STORE);
@@ -44,6 +71,14 @@ export async function updateSettings(
     cronControl: {
       ...store.settings.cronControl,
       ...(patch.cronControl || {}),
+    },
+    uiTheme: {
+      ...store.settings.uiTheme,
+      ...(patch.uiTheme || {}),
+      custom: {
+        ...store.settings.uiTheme.custom,
+        ...(patch.uiTheme?.custom || {}),
+      },
     },
   };
   await writeStore(store);
@@ -231,4 +266,103 @@ export async function markProcessed(
 
 export async function getFullStore(): Promise<Store> {
   return readStore();
+}
+
+export async function getCourses(): Promise<Course[]> {
+  const store = await readStore();
+  return [...store.courses].sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export async function upsertCourse(
+  input: Partial<Course> & { name: string },
+): Promise<Course> {
+  const store = await readStore();
+  if (input.id) {
+    const idx = store.courses.findIndex((c) => c.id === input.id);
+    if (idx >= 0) {
+      store.courses[idx] = { ...store.courses[idx]!, ...input };
+      await writeStore(store);
+      return store.courses[idx]!;
+    }
+  }
+  const course: Course = {
+    id: input.id || uid(),
+    name: input.name,
+    code: input.code || "",
+    color: input.color || "#0f766e",
+    professor: input.professor || "",
+    schedule: input.schedule || "",
+    sortOrder:
+      input.sortOrder ??
+      store.courses.reduce((m, c) => Math.max(m, c.sortOrder), 0) + 1,
+    createdAt: new Date().toISOString(),
+  };
+  store.courses.push(course);
+  await writeStore(store);
+  return course;
+}
+
+export async function deleteCourse(id: string): Promise<void> {
+  const store = await readStore();
+  store.courses = store.courses.filter((c) => c.id !== id);
+  for (const a of store.assignments) {
+    if (a.courseId === id) a.courseId = null;
+  }
+  await writeStore(store);
+}
+
+export async function getAssignments(): Promise<Assignment[]> {
+  const store = await readStore();
+  return [...store.assignments].sort((a, b) => {
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return String(a.dueAt || "").localeCompare(String(b.dueAt || ""));
+  });
+}
+
+export async function upsertAssignment(
+  input: Partial<Assignment> & { title: string },
+): Promise<Assignment> {
+  const store = await readStore();
+  if (input.id) {
+    const idx = store.assignments.findIndex((a) => a.id === input.id);
+    if (idx >= 0) {
+      store.assignments[idx] = { ...store.assignments[idx]!, ...input };
+      await writeStore(store);
+      return store.assignments[idx]!;
+    }
+  }
+  const row: Assignment = {
+    id: input.id || uid(),
+    courseId: input.courseId ?? null,
+    title: input.title,
+    status: (input.status as AssignmentStatus) || "not_started",
+    dueAt: input.dueAt ?? null,
+    assignmentType: input.assignmentType || "Homework",
+    difficulty: (input.difficulty as AssignmentDifficulty) || "medium",
+    pointsEarned: input.pointsEarned ?? null,
+    pointsPossible: input.pointsPossible ?? null,
+    notes: input.notes || "",
+    sortOrder:
+      input.sortOrder ??
+      store.assignments.reduce((m, a) => Math.max(m, a.sortOrder), 0) + 1,
+    dueReminderSentFor: input.dueReminderSentFor ?? null,
+    createdAt: new Date().toISOString(),
+  };
+  store.assignments.push(row);
+  await writeStore(store);
+  return row;
+}
+
+export async function deleteAssignment(id: string): Promise<void> {
+  const store = await readStore();
+  store.assignments = store.assignments.filter((a) => a.id !== id);
+  await writeStore(store);
+}
+
+export async function bulkUpsertAssignments(
+  rows: (Partial<Assignment> & { title: string })[],
+): Promise<Assignment[]> {
+  const out: Assignment[] = [];
+  for (const row of rows) out.push(await upsertAssignment(row));
+  return out;
 }

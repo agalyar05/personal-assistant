@@ -1,5 +1,14 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { AppSettings, ListItem, Reminder, Store } from "../types";
+import type {
+  AppSettings,
+  Assignment,
+  AssignmentDifficulty,
+  AssignmentStatus,
+  Course,
+  ListItem,
+  Reminder,
+  Store,
+} from "../types";
 import { DEFAULT_SETTINGS } from "../types";
 import * as local from "./local";
 
@@ -29,9 +38,22 @@ export async function getSettings(): Promise<AppSettings> {
   const sb = client();
   const { data, error } = await sb.from("app_settings").select("*").eq("id", 1).maybeSingle();
   if (error || !data) return DEFAULT_SETTINGS;
+  const payload = (data.payload || {}) as Partial<AppSettings>;
   return {
     ...DEFAULT_SETTINGS,
-    ...(data.payload as AppSettings),
+    ...payload,
+    cronControl: {
+      ...DEFAULT_SETTINGS.cronControl,
+      ...(payload.cronControl || {}),
+    },
+    uiTheme: {
+      ...DEFAULT_SETTINGS.uiTheme,
+      ...(payload.uiTheme || {}),
+      custom: {
+        ...DEFAULT_SETTINGS.uiTheme.custom,
+        ...(payload.uiTheme?.custom || {}),
+      },
+    },
   };
 }
 
@@ -44,6 +66,14 @@ export async function updateSettings(
     ...current,
     ...patch,
     cronControl: { ...current.cronControl, ...(patch.cronControl || {}) },
+    uiTheme: {
+      ...current.uiTheme,
+      ...(patch.uiTheme || {}),
+      custom: {
+        ...current.uiTheme.custom,
+        ...(patch.uiTheme?.custom || {}),
+      },
+    },
   };
   const sb = client();
   await sb.from("app_settings").upsert({ id: 1, payload: next });
@@ -267,5 +297,134 @@ export async function getFullStore(): Promise<Store> {
     listItems: await getListItems(),
     reminders: await getReminders(),
     processedMessages: [],
+    courses: await getCourses(),
+    assignments: await getAssignments(),
   };
+}
+
+function rowToCourse(row: Record<string, unknown>): Course {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    code: String(row.code || ""),
+    color: String(row.color || "#0f766e"),
+    professor: String(row.professor || ""),
+    schedule: String(row.schedule || ""),
+    sortOrder: Number(row.sort_order || 0),
+    createdAt: String(row.created_at || new Date().toISOString()),
+  };
+}
+
+function rowToAssignment(row: Record<string, unknown>): Assignment {
+  return {
+    id: String(row.id),
+    courseId: row.course_id ? String(row.course_id) : null,
+    title: String(row.title),
+    status: (String(row.status || "not_started") as AssignmentStatus),
+    dueAt: row.due_at ? String(row.due_at) : null,
+    assignmentType: String(row.assignment_type || "Homework"),
+    difficulty: (String(row.difficulty || "medium") as AssignmentDifficulty),
+    pointsEarned:
+      row.points_earned == null ? null : Number(row.points_earned),
+    pointsPossible:
+      row.points_possible == null ? null : Number(row.points_possible),
+    notes: String(row.notes || ""),
+    sortOrder: Number(row.sort_order || 0),
+    dueReminderSentFor: row.due_reminder_sent_for
+      ? String(row.due_reminder_sent_for)
+      : null,
+    createdAt: String(row.created_at || new Date().toISOString()),
+  };
+}
+
+export async function getCourses(): Promise<Course[]> {
+  if (!hasSupabase()) return local.getCourses();
+  const sb = client();
+  const { data } = await sb.from("courses").select("*").order("sort_order");
+  return (data || []).map((r) => rowToCourse(r as Record<string, unknown>));
+}
+
+export async function upsertCourse(
+  input: Partial<Course> & { name: string },
+): Promise<Course> {
+  if (!hasSupabase()) return local.upsertCourse(input);
+  const sb = client();
+  const body: Record<string, unknown> = {
+    name: input.name,
+    code: input.code ?? "",
+    color: input.color ?? "#0f766e",
+    professor: input.professor ?? "",
+    schedule: input.schedule ?? "",
+    sort_order: input.sortOrder ?? 0,
+  };
+  if (input.id) body.id = input.id;
+  const { data, error } = await sb
+    .from("courses")
+    .upsert(body)
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(error?.message || "Failed to save course");
+  return rowToCourse(data as Record<string, unknown>);
+}
+
+export async function deleteCourse(id: string): Promise<void> {
+  if (!hasSupabase()) return local.deleteCourse(id);
+  const sb = client();
+  await sb.from("assignments").update({ course_id: null }).eq("course_id", id);
+  await sb.from("courses").delete().eq("id", id);
+}
+
+export async function getAssignments(): Promise<Assignment[]> {
+  if (!hasSupabase()) return local.getAssignments();
+  const sb = client();
+  const { data } = await sb
+    .from("assignments")
+    .select("*")
+    .order("sort_order");
+  return (data || []).map((r) => rowToAssignment(r as Record<string, unknown>));
+}
+
+export async function upsertAssignment(
+  input: Partial<Assignment> & { title: string },
+): Promise<Assignment> {
+  if (!hasSupabase()) return local.upsertAssignment(input);
+  const sb = client();
+  const body: Record<string, unknown> = {
+    title: input.title,
+    course_id: input.courseId ?? null,
+    status: input.status ?? "not_started",
+    due_at: input.dueAt ?? null,
+    assignment_type: input.assignmentType ?? "Homework",
+    difficulty: input.difficulty ?? "medium",
+    points_earned: input.pointsEarned ?? null,
+    points_possible: input.pointsPossible ?? null,
+    notes: input.notes ?? "",
+    sort_order: input.sortOrder ?? 0,
+    due_reminder_sent_for: input.dueReminderSentFor ?? null,
+  };
+  if (input.id) body.id = input.id;
+  const { data, error } = await sb
+    .from("assignments")
+    .upsert(body)
+    .select("*")
+    .single();
+  if (error || !data) {
+    throw new Error(error?.message || "Failed to save assignment");
+  }
+  return rowToAssignment(data as Record<string, unknown>);
+}
+
+export async function deleteAssignment(id: string): Promise<void> {
+  if (!hasSupabase()) return local.deleteAssignment(id);
+  const sb = client();
+  await sb.from("assignments").delete().eq("id", id);
+}
+
+export async function bulkUpsertAssignments(
+  rows: (Partial<Assignment> & { title: string })[],
+): Promise<Assignment[]> {
+  if (!hasSupabase()) return local.bulkUpsertAssignments(rows);
+  const out: Assignment[] = [];
+  for (const row of rows) out.push(await upsertAssignment(row));
+  return out;
 }

@@ -2,6 +2,7 @@ import Groq from "groq-sdk";
 import * as db from "../db";
 import * as lists from "../lists";
 import * as reminders from "../reminders";
+import { formatDueSummary } from "../assignments";
 import { extractLocationPhrase, resolvePlace } from "../location";
 import { formatWeatherText } from "../weather";
 import { calendar } from "../sms/gmail";
@@ -47,6 +48,7 @@ function findCommandLine(message: string): string | null {
       /^note:?\s+/i.test(line) ||
       /^timezone\s+/i.test(line) ||
       extractLocationPhrase(line) !== null ||
+      /^(due|what'?s due)\b/i.test(line) ||
       /^done\s+/i.test(line) ||
       /^-\s*.+/.test(line) ||
       /^what'?s left on (\.\w+)\s*$/i.test(line)
@@ -103,6 +105,27 @@ export async function tryMessageShorthand(
   if (placePhrase) {
     return setLocationFromPlace(placePhrase);
   }
+
+  const due = text.match(
+    /^(?:what'?s\s+)?due\s*(today|tomorrow|this\s+week|week)?\s*\??$/i,
+  );
+  if (due || /^(?:what'?s\s+due)\s*\??$/i.test(text)) {
+    const settings = await db.getSettings();
+    const whichRaw = (due?.[1] || "today").toLowerCase().replace(/\s+/g, " ");
+    const which =
+      whichRaw.includes("tomorrow")
+        ? "tomorrow"
+        : whichRaw.includes("week")
+          ? "week"
+          : "today";
+    return formatDueSummary(which, settings.timezone || "America/Detroit");
+  }
+
+  if (/weather|umbrella|forecast/i.test(text) && text.length < 80) {
+    const days = /tomorrow/i.test(text) ? 1 : 0;
+    return formatWeatherText(days);
+  }
+
   const note = text.match(/^note:?\s+(.+)$/i);
   if (note) {
     const stamp = new Date().toLocaleString("en-US", {
@@ -505,7 +528,7 @@ const KNOWLEDGE_RE =
   /^(who (?:is|was|are|were)|what(?:'s| is| are| was| were)|when (?:did|was|is|are)|where (?:is|was|are|were|did)|why (?:did|is|was|are|do|does)|how (?:did|does|do|old|many|much|long)|tell me about|define|explain)\b/i;
 
 const ASSISTANT_KW =
-  /\b(calendar|remind|reminder|groceries|grocery|\.notes|\.groceries|\.todo|briefing|schedule|umbrella|weather|free at|am i free|my list|gcal|google calendar|check off|snooze|cancel reminder|i'?m in|timezone|location)\b/i;
+  /\b(calendar|remind|reminder|groceries|grocery|\.notes|\.groceries|\.todo|briefing|schedule|umbrella|weather|free at|am i free|my list|gcal|google calendar|check off|snooze|cancel reminder|i'?m in|timezone|location|due today|due tomorrow|assignment)\b/i;
 
 async function answerKnowledge(question: string): Promise<string> {
   const client = groq();

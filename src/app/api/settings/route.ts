@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import * as db from "@/lib/db";
-import type { CronControlSettings } from "@/lib/types";
+import type { CronControlSettings, UiThemeSettings } from "@/lib/types";
 
 export async function GET() {
   const settings = await db.getSettings();
@@ -18,6 +18,7 @@ export async function PUT(req: Request) {
     weeklyBriefingDay?: string;
     weeklyBriefingTime?: string;
     cronControl?: Partial<CronControlSettings>;
+    uiTheme?: UiThemeSettings;
     liveHours?: number;
     endLive?: boolean;
   };
@@ -40,6 +41,7 @@ export async function PUT(req: Request) {
     weeklyBriefingDay: body.weeklyBriefingDay ?? current.weeklyBriefingDay,
     weeklyBriefingTime: body.weeklyBriefingTime ?? current.weeklyBriefingTime,
     cronControl,
+    uiTheme: body.uiTheme ?? current.uiTheme,
   });
   return NextResponse.json({ settings });
 }

@@ -1,6 +1,7 @@
 import * as db from "./db";
 import { isCronActive } from "./cron-control";
 import { getReply, replyAsText } from "./assistant";
+import { formatDueSummary } from "./assignments";
 import {
   getIncomingTexts,
   markThreadHandled,
@@ -70,7 +71,23 @@ async function maybeMorningBriefing(): Promise<void> {
     /* ignore */
   }
   const weather = await formatWeatherText(0);
-  const body = `Good morning! ☀️\n\n${events}\n\n${weather}`;
+  let dueBlock = "";
+  try {
+    dueBlock = await formatDueSummary("today", tz);
+  } catch {
+    /* ignore */
+  }
+  const body = [
+    "Good morning! ☀️",
+    "",
+    events,
+    "",
+    weather,
+    dueBlock && !dueBlock.startsWith("Nothing") ? dueBlock : "",
+  ]
+    .filter((line, i, arr) => line !== "" || (arr[i - 1] && arr[i - 1] !== ""))
+    .join("\n")
+    .trim();
   await sendSms(body, "Good morning");
   await db.updateSettings({ lastMorningBriefing: today });
   log("Morning briefing sent.");

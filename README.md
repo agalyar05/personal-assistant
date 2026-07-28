@@ -201,6 +201,7 @@ Optional: only 7:00–23:59 in America/Detroit — the app **also** gates with c
 | `quote` / `mlem` / `note: …` | shortcuts |
 | `timezone America/Chicago` | change timezone only |
 | `I'm in Seattle now` | set weather city + timezone |
+| `due today` / `due tomorrow` / `due this week` | assignment due list |
 | `who is Amelia Earhart` | general knowledge |
 
 ---
