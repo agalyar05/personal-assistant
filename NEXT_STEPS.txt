@@ -1,0 +1,9 @@
+# Personal Assistant — your next actions
+
+The new app lives at:
+
+**`/Users/agalya/Desktop/personal-assistant`**
+
+Open that folder in Cursor when you want to keep building it.
+
+Full details: `README.md` in that folder.
