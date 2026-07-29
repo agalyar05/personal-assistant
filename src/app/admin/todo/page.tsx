@@ -13,11 +13,21 @@ import {
 type ColumnId = ListDifficulty | "done";
 
 const COLUMNS: { id: ColumnId; label: string }[] = [
+  { id: "unassigned", label: "Unassigned" },
   { id: "easy", label: "Easy" },
   { id: "medium", label: "Medium" },
   { id: "hard", label: "Hard" },
   { id: "done", label: "✅ Done" },
 ];
+
+function bySort(a: ListItem, b: ListItem) {
+  return a.sortOrder - b.sortOrder || a.text.localeCompare(b.text);
+}
+
+function inColumn(i: ListItem, column: ColumnId) {
+  if (column === "done") return i.checked;
+  return !i.checked && i.difficulty === column;
+}
 
 export default function TodoPage() {
   const [items, setItems] = useState<ListItem[]>([]);
@@ -25,6 +35,7 @@ export default function TodoPage() {
   const [msg, setMsg] = useState("");
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<ColumnId | null>(null);
+  const [overItemId, setOverItemId] = useState<string | null>(null);
   const [celebrate, setCelebrate] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelected, setLastSelected] = useState<string | null>(null);
@@ -35,7 +46,7 @@ export default function TodoPage() {
     setItems(
       (json.all || json.items || []).map((i: ListItem) => ({
         ...i,
-        difficulty: i.difficulty || "medium",
+        difficulty: i.difficulty || "unassigned",
       })),
     );
   }, []);
@@ -55,10 +66,7 @@ export default function TodoPage() {
   const columns = useMemo(() => {
     return COLUMNS.map((col) => ({
       ...col,
-      items:
-        col.id === "done"
-          ? items.filter((i) => i.checked)
-          : items.filter((i) => !i.checked && i.difficulty === col.id),
+      items: items.filter((i) => inColumn(i, col.id)).sort(bySort),
     }));
   }, [items]);
 
@@ -74,29 +82,51 @@ export default function TodoPage() {
       body: JSON.stringify({ list_name: "todo", items: parts }),
     });
     const json = await res.json();
-    setMsg(json.message || "Added");
+    setMsg(json.message || "Added to Unassigned");
     setNewText("");
     await load();
   }
 
-  async function moveMany(ids: string[], column: ColumnId) {
+  async function moveMany(
+    ids: string[],
+    column: ColumnId,
+    beforeId?: string | null,
+  ) {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
     const goingDone = column === "done";
     const anyNewlyDone = ids.some((id) => {
       const prev = items.find((i) => i.id === id);
       return goingDone && prev && !prev.checked;
     });
 
-    setItems((list) =>
-      list.map((i) => {
-        if (!ids.includes(i.id)) return i;
-        if (goingDone) return { ...i, checked: true };
-        return {
-          ...i,
-          checked: false,
-          difficulty: column as ListDifficulty,
-        };
-      }),
-    );
+    const moved = items
+      .filter((i) => idSet.has(i.id))
+      .map((i) =>
+        goingDone
+          ? { ...i, checked: true }
+          : {
+              ...i,
+              checked: false,
+              difficulty: column as ListDifficulty,
+            },
+      );
+
+    const others = items.filter((i) => !idSet.has(i.id));
+    const colOthers = others.filter((i) => inColumn(i, column)).sort(bySort);
+    const anchor =
+      beforeId && !idSet.has(beforeId)
+        ? colOthers.findIndex((i) => i.id === beforeId)
+        : -1;
+    const at = anchor >= 0 ? anchor : colOthers.length;
+    const newCol = [
+      ...colOthers.slice(0, at),
+      ...moved,
+      ...colOthers.slice(at),
+    ].map((i, idx) => ({ ...i, sortOrder: idx + 1 }));
+
+    const rest = others.filter((i) => !inColumn(i, column));
+    setItems([...rest, ...newCol]);
 
     const results = await Promise.all(
       ids.map((id) =>
@@ -121,6 +151,16 @@ export default function TodoPage() {
       await load();
       return;
     }
+
+    await fetch("/api/lists", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "reorder",
+        ids: newCol.map((i) => i.id),
+      }),
+    });
+
     if (anyNewlyDone) setCelebrate(true);
     setSelected(new Set());
   }
@@ -169,7 +209,8 @@ export default function TodoPage() {
           <div className="min-w-0">
             <h2 className="display text-xl leading-tight">.todo</h2>
             <p className="mt-0.5 text-xs text-[var(--muted)]">
-              Click · ⌘/Ctrl · Shift to select, then drag.
+              New items land in Unassigned — drag between columns or onto a card
+              to reorder.
               {selected.size > 0 && (
                 <>
                   {" "}
@@ -229,9 +270,10 @@ export default function TodoPage() {
                   e.dataTransfer.getData("text/todo-id") || dragIds[0];
                 if (one) ids = [one];
               }
-              if (ids.length) void moveMany(ids, col.id);
+              if (ids.length) void moveMany(ids, col.id, overItemId);
               setDragIds([]);
               setOverCol(null);
+              setOverItemId(null);
             }}
             className={`${kanbanColumnClass} ${
               overCol === col.id
@@ -239,7 +281,7 @@ export default function TodoPage() {
                 : "border-[var(--line)] bg-[var(--card)]"
             }`}
           >
-            <div className="mb-2 text-xs font-medium sm:text-sm">
+            <div className="mb-2 shrink-0 text-xs font-medium sm:text-sm">
               {col.label}{" "}
               <span className="text-[var(--muted)]">({col.items.length})</span>
             </div>
@@ -252,6 +294,15 @@ export default function TodoPage() {
                     key={item.id}
                     draggable
                     onClick={(e) => selectCard(item.id, col.items, e)}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setOverCol(col.id);
+                      setOverItemId(item.id);
+                    }}
+                    onDragLeave={() =>
+                      setOverItemId((id) => (id === item.id ? null : id))
+                    }
                     onDragStart={(e) => {
                       const ids = idsToMove(item.id);
                       setDragIds(ids);
@@ -265,11 +316,16 @@ export default function TodoPage() {
                     onDragEnd={() => {
                       setDragIds([]);
                       setOverCol(null);
+                      setOverItemId(null);
                     }}
                     className={`cursor-grab rounded-lg border px-2 py-2 text-xs active:cursor-grabbing sm:rounded-xl sm:px-3 sm:py-2.5 sm:text-sm ${
                       isSel
                         ? "border-[var(--accent)] bg-[var(--accent-soft)]/60 ring-2 ring-[var(--accent)]"
                         : "border-[var(--line)] bg-white/90"
+                    } ${
+                      overItemId === item.id && !isDragging
+                        ? "ring-1 ring-[var(--accent)]"
+                        : ""
                     } ${
                       item.checked
                         ? "bg-stone-100 text-[var(--muted)] line-through opacity-80"

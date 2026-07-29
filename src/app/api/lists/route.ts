@@ -31,9 +31,11 @@ export async function POST(req: Request) {
     items?: string[];
     action?: string;
     id?: string;
+    ids?: string[];
     checked?: boolean;
     difficulty?: ListDifficulty;
     text?: string;
+    sortOrder?: number;
   };
   const listName = body.list_name || lists.DEFAULT_GROCERY;
 
@@ -64,8 +66,15 @@ export async function POST(req: Request) {
       checked: body.checked,
       difficulty: body.difficulty,
       text: body.text,
+      sortOrder: body.sortOrder,
     });
     return NextResponse.json({ item });
+  }
+  if (body.action === "reorder" && Array.isArray(body.ids)) {
+    await Promise.all(
+      body.ids.map((id, i) => db.updateListItem(id, { sortOrder: i + 1 })),
+    );
+    return NextResponse.json({ ok: true });
   }
   const msg = await lists.addToList(listName, body.items || []);
   return NextResponse.json({

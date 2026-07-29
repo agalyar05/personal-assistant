@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Assignment, AssignmentStatus, Course } from "@/lib/types";
+import type {
+  Application,
+  Assignment,
+  AssignmentStatus,
+  Course,
+} from "@/lib/types";
 import {
   ASSIGNMENT_DIFFICULTIES,
   ASSIGNMENT_STATUSES,
@@ -18,16 +23,53 @@ import {
   kanbanColumnBodyClass,
   kanbanColumnClass,
 } from "@/lib/kanban-layout";
+import { normalizeApplicationUrl } from "@/lib/applications";
+import { APPLICATION_STATUS_LABELS } from "@/lib/application-meta";
 
 type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
+type CalRange = "month" | "week";
+type WeekStart = 0 | 1; // 0 = Sunday, 1 = Monday
 
 const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
+const WEEK_START_KEY = "pa_cal_week_start";
+const CAL_RANGE_KEY = "pa_cal_range";
+const DEFAULT_VIEW_KEY = "pa_masterlist_default_view";
+const APP_CLOSED = new Set(["accepted", "rejected", "withdrawn"]);
+const ALL_VIEWS: View[] = ["sheet", "agenda", "calendar", "kanban", "progress"];
+
+function isView(v: string): v is View {
+  return (ALL_VIEWS as string[]).includes(v);
+}
+
+function startOfWeek(d: Date, weekStartsOn: WeekStart): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = (x.getDay() - weekStartsOn + 7) % 7;
+  x.setDate(x.getDate() - diff);
+  return x;
+}
+
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function weekdayLabels(weekStartsOn: WeekStart): string[] {
+  const all = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return [...all.slice(weekStartsOn), ...all.slice(0, weekStartsOn)];
+}
 
 export default function AssignmentsPage() {
   const [view, setView] = useState<View>("sheet");
+  const [defaultView, setDefaultView] = useState<View>("sheet");
   const [kanbanBy, setKanbanBy] = useState<KanbanBy>("status");
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [msg, setMsg] = useState("");
   const [celebrate, setCelebrate] = useState(false);
@@ -35,10 +77,16 @@ export default function AssignmentsPage() {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
+  const [weekAnchor, setWeekAnchor] = useState(() => startOfWeek(new Date(), 0));
+  const [calRange, setCalRange] = useState<CalRange>("month");
+  const [weekStartsOn, setWeekStartsOn] = useState<WeekStart>(0);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/assignments");
-    const json = await res.json();
+    const [aRes, appRes] = await Promise.all([
+      fetch("/api/assignments"),
+      fetch("/api/applications"),
+    ]);
+    const json = await aRes.json();
     setAssignments(
       (json.assignments || []).map((a: Assignment) => ({
         ...a,
@@ -46,15 +94,44 @@ export default function AssignmentsPage() {
       })),
     );
     setCourses(json.courses || []);
+    if (appRes.ok) {
+      const appJson = await appRes.json();
+      setApplications(appJson.applications || []);
+    }
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  useEffect(() => {
+    try {
+      const ws = localStorage.getItem(WEEK_START_KEY);
+      if (ws === "1" || ws === "0") {
+        const v = Number(ws) as WeekStart;
+        setWeekStartsOn(v);
+        setWeekAnchor((prev) => startOfWeek(prev, v));
+      }
+      const range = localStorage.getItem(CAL_RANGE_KEY);
+      if (range === "week" || range === "month") setCalRange(range);
+      const dv = localStorage.getItem(DEFAULT_VIEW_KEY);
+      if (dv && isView(dv)) {
+        setDefaultView(dv);
+        setView(dv);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const courseMap = useMemo(
     () => new Map(courses.map((c) => [c.id, c])),
     [courses],
+  );
+
+  const openApps = useMemo(
+    () => applications.filter((a) => !APP_CLOSED.has(a.status)),
+    [applications],
   );
 
   async function patchAssignment(patch: Partial<Assignment> & { id: string }) {
@@ -101,6 +178,43 @@ export default function AssignmentsPage() {
     await load();
   }
 
+  async function addInKanbanColumn(columnId: string) {
+    const body: Record<string, unknown> = {
+      title: "New assignment",
+      status: "not_started",
+      difficulty: "medium",
+      assignmentType: "Homework",
+      link: "",
+      sortOrder: assignments.length + 1,
+    };
+    if (kanbanBy === "status") body.status = columnId;
+    if (kanbanBy === "difficulty") body.difficulty = columnId;
+    if (kanbanBy === "class") {
+      body.courseId = columnId === "none" ? null : columnId;
+    }
+    const res = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      setMsg("Could not add card");
+      return;
+    }
+    setMsg("Card added");
+    await load();
+  }
+
+  function saveDefaultView(v: View) {
+    setDefaultView(v);
+    try {
+      localStorage.setItem(DEFAULT_VIEW_KEY, v);
+    } catch {
+      /* ignore */
+    }
+    setMsg(`Default view: ${v}`);
+  }
+
   async function removeRow(id: string) {
     await fetch("/api/assignments", {
       method: "POST",
@@ -145,10 +259,18 @@ export default function AssignmentsPage() {
               <a href="/admin/groups" className="text-[var(--accent)] underline">
                 Groups
               </a>
-              . Text <code className="text-[var(--ink)]">due today</code>.
+              . Scholarship deadlines from{" "}
+              <a
+                href="/admin/applications"
+                className="text-[var(--accent)] underline"
+              >
+                Applications
+              </a>{" "}
+              show on Calendar & Agenda
+              {openApps.length ? ` (${openApps.length} open)` : ""}.
             </p>
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {views.map(([id, label]) => (
               <button
                 key={id}
@@ -163,6 +285,23 @@ export default function AssignmentsPage() {
                 {label}
               </button>
             ))}
+            <label className="ml-1 flex items-center gap-1 text-[10px] text-[var(--muted)] sm:text-xs">
+              Default
+              <select
+                className="rounded-md border border-[var(--line)] bg-white px-1.5 py-1 text-xs text-[var(--ink)]"
+                value={defaultView}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (isView(v)) saveDefaultView(v);
+                }}
+              >
+                {views.map(([id, label]) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
         {msg && <p className="mt-2 text-sm text-[var(--accent)]">{msg}</p>}
@@ -188,6 +327,7 @@ export default function AssignmentsPage() {
       {view === "agenda" && (
         <AgendaView
           assignments={assignments}
+          applications={openApps}
           courseMap={courseMap}
           onStatus={(id, status) => void patchAssignment({ id, status })}
         />
@@ -197,7 +337,29 @@ export default function AssignmentsPage() {
         <CalendarView
           month={month}
           setMonth={setMonth}
+          weekAnchor={weekAnchor}
+          setWeekAnchor={setWeekAnchor}
+          calRange={calRange}
+          setCalRange={(r) => {
+            setCalRange(r);
+            try {
+              localStorage.setItem(CAL_RANGE_KEY, r);
+            } catch {
+              /* ignore */
+            }
+          }}
+          weekStartsOn={weekStartsOn}
+          setWeekStartsOn={(v) => {
+            setWeekStartsOn(v);
+            setWeekAnchor((prev) => startOfWeek(prev, v));
+            try {
+              localStorage.setItem(WEEK_START_KEY, String(v));
+            } catch {
+              /* ignore */
+            }
+          }}
           assignments={assignments}
+          applications={openApps}
           courseMap={courseMap}
           onMoveDay={(ids, dueAt) => {
             void (async () => {
@@ -219,6 +381,7 @@ export default function AssignmentsPage() {
           courses={courses}
           kanbanBy={kanbanBy}
           setKanbanBy={setKanbanBy}
+          onAddInColumn={(columnId) => void addInKanbanColumn(columnId)}
           onDropCards={(ids, columnId) => {
             void (async () => {
               const patch =
@@ -244,10 +407,12 @@ export default function AssignmentsPage() {
 
 function AgendaView({
   assignments,
+  applications,
   courseMap,
   onStatus,
 }: {
   assignments: Assignment[];
+  applications: Application[];
   courseMap: Map<string, Course>;
   onStatus: (id: string, status: AssignmentStatus) => void;
 }) {
@@ -257,12 +422,71 @@ function AgendaView({
   const undated = assignments.filter(
     (a) => !isClosedAssignmentStatus(a.status) && !a.dueAt,
   );
+  const appDeadlines = applications
+    .filter((a) => a.deadline)
+    .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+
+  type AgendaItem =
+    | { kind: "assignment"; sort: string; a: Assignment }
+    | { kind: "application"; sort: string; app: Application };
+
+  const merged: AgendaItem[] = [
+    ...open.map((a) => ({
+      kind: "assignment" as const,
+      sort: String(a.dueAt),
+      a,
+    })),
+    ...appDeadlines.map((app) => ({
+      kind: "application" as const,
+      sort: String(app.deadline),
+      app,
+    })),
+  ].sort((x, y) => x.sort.localeCompare(y.sort));
 
   return (
     <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-5">
       <h3 className="display text-xl">Upcoming</h3>
       <ul className="mt-4 space-y-2">
-        {open.map((a) => {
+        {merged.map((item) => {
+          if (item.kind === "application") {
+            const app = item.app;
+            return (
+              <li
+                key={`app-${app.id}`}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-[var(--accent)]/40 bg-[var(--accent-soft)]/40 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--accent)]">
+                      {app.kind}
+                    </span>
+                    <span className="font-medium">
+                      {app.url ? (
+                        <a
+                          href={normalizeApplicationUrl(app.url)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[var(--accent)] hover:underline"
+                        >
+                          {app.title}
+                        </a>
+                      ) : (
+                        app.title
+                      )}
+                    </span>
+                  </div>
+                  <div className="text-xs text-[var(--muted)]">
+                    Deadline {app.deadline} ·{" "}
+                    {APPLICATION_STATUS_LABELS[app.status]} ·{" "}
+                    <a href="/admin/applications" className="underline">
+                      Applications
+                    </a>
+                  </div>
+                </div>
+              </li>
+            );
+          }
+          const a = item.a;
           const c = a.courseId ? courseMap.get(a.courseId) : null;
           return (
             <li
@@ -316,7 +540,7 @@ function AgendaView({
             </li>
           );
         })}
-        {!open.length && (
+        {!merged.length && (
           <li className="text-sm text-[var(--muted)]">Nothing upcoming.</li>
         )}
       </ul>
@@ -439,28 +663,52 @@ function ProgressView({
 function CalendarView({
   month,
   setMonth,
+  weekAnchor,
+  setWeekAnchor,
+  calRange,
+  setCalRange,
+  weekStartsOn,
+  setWeekStartsOn,
   assignments,
+  applications,
   courseMap,
   onMoveDay,
 }: {
   month: Date;
   setMonth: (d: Date) => void;
+  weekAnchor: Date;
+  setWeekAnchor: (d: Date) => void;
+  calRange: CalRange;
+  setCalRange: (r: CalRange) => void;
+  weekStartsOn: WeekStart;
+  setWeekStartsOn: (v: WeekStart) => void;
   assignments: Assignment[];
+  applications: Application[];
   courseMap: Map<string, Course>;
   onMoveDay: (ids: string[], dueAt: string) => void;
 }) {
   const year = month.getFullYear();
   const mo = month.getMonth();
-  const firstDow = new Date(year, mo, 1).getDay();
-  const daysInMonth = new Date(year, mo + 1, 0).getDate();
-  const cells: (number | null)[] = [
-    ...Array.from({ length: firstDow }, () => null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ];
-  while (cells.length % 7) cells.push(null);
+  const weekStart = startOfWeek(weekAnchor, weekStartsOn);
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  const monthCells = useMemo(() => {
+    const first = new Date(year, mo, 1);
+    const lead = (first.getDay() - weekStartsOn + 7) % 7;
+    const daysInMonth = new Date(year, mo + 1, 0).getDate();
+    const cells: (Date | null)[] = [
+      ...Array.from({ length: lead }, () => null),
+      ...Array.from(
+        { length: daysInMonth },
+        (_, i) => new Date(year, mo, i + 1),
+      ),
+    ];
+    while (cells.length % 7) cells.push(null);
+    return cells;
+  }, [year, mo, weekStartsOn]);
 
   const [dragIds, setDragIds] = useState<string[]>([]);
-  const [overDay, setOverDay] = useState<number | null>(null);
+  const [overYmd, setOverYmd] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelected, setLastSelected] = useState<string | null>(null);
 
@@ -472,18 +720,18 @@ function CalendarView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  function itemsForDay(day: number) {
+  function assignmentsForYmd(ymd: string) {
     return assignments.filter((a) => {
       if (!a.dueAt || isClosedAssignmentStatus(a.status)) return false;
       const p = dueDateParts(a.dueAt);
-      return p && p.year === year && p.month === mo && p.day === day;
+      if (!p) return false;
+      const key = `${p.year}-${String(p.month + 1).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+      return key === ymd;
     });
   }
 
-  function dateForDay(day: number): string {
-    const m = String(mo + 1).padStart(2, "0");
-    const d = String(day).padStart(2, "0");
-    return `${year}-${m}-${d}`;
+  function appsForYmd(ymd: string) {
+    return applications.filter((a) => a.deadline === ymd);
   }
 
   function selectCard(
@@ -504,7 +752,7 @@ function CalendarView({
         if (next.has(id)) next.delete(id);
         else next.add(id);
       } else if (next.has(id) && next.size > 1) {
-        // keep multi-select so drag can move the group
+        // keep multi-select
       } else {
         next.clear();
         next.add(id);
@@ -521,30 +769,228 @@ function CalendarView({
     return [primary];
   }
 
+  function goToday() {
+    const now = new Date();
+    setMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    setWeekAnchor(startOfWeek(now, weekStartsOn));
+  }
+
+  function shiftRange(dir: -1 | 1) {
+    if (calRange === "week") {
+      setWeekAnchor(addDays(weekStart, dir * 7));
+      const mid = addDays(weekStart, dir * 7 + 3);
+      setMonth(new Date(mid.getFullYear(), mid.getMonth(), 1));
+    } else {
+      setMonth(new Date(year, mo + dir, 1));
+    }
+  }
+
+  const title =
+    calRange === "week"
+      ? `${weekDays[0]!.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        })} – ${weekDays[6]!.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })}`
+      : month.toLocaleString("en-US", { month: "long", year: "numeric" });
+
+  const todayYmd = toYmd(new Date());
+  const labels = weekdayLabels(weekStartsOn);
+
+  function renderDayCell(day: Date | null, key: string | number) {
+    if (!day) {
+      return (
+        <div
+          key={key}
+          className={`bg-[var(--bg)]/40 ${
+            calRange === "week" ? "min-h-[70vh]" : "min-h-[7.5rem] sm:min-h-[9rem]"
+          }`}
+        />
+      );
+    }
+    const ymd = toYmd(day);
+    const dayAssignments = assignmentsForYmd(ymd);
+    const dayApps = appsForYmd(ymd);
+    const isToday = ymd === todayYmd;
+    const inMonth = day.getMonth() === mo;
+
+    return (
+      <div
+        key={key}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setOverYmd(ymd);
+        }}
+        onDragLeave={() => setOverYmd((d) => (d === ymd ? null : d))}
+        onDrop={(e) => {
+          e.preventDefault();
+          let ids: string[] = [];
+          try {
+            const raw = e.dataTransfer.getData("text/assignment-ids");
+            if (raw) ids = JSON.parse(raw) as string[];
+          } catch {
+            /* ignore */
+          }
+          if (!ids.length) {
+            const one =
+              e.dataTransfer.getData("text/assignment-id") || dragIds[0];
+            if (one) ids = [one];
+          }
+          if (ids.length) onMoveDay(ids, ymd);
+          setDragIds([]);
+          setOverYmd(null);
+          setSelected(new Set());
+        }}
+        className={`p-2 text-left ${
+          calRange === "week"
+            ? "min-h-[70vh]"
+            : "min-h-[7.5rem] sm:min-h-[9rem]"
+        } ${
+          overYmd === ymd
+            ? "bg-[var(--accent-soft)]"
+            : isToday
+              ? "bg-[var(--accent-soft)]/35"
+              : "bg-[var(--bg)]"
+        } ${calRange === "month" && !inMonth ? "opacity-40" : ""}`}
+      >
+        <div
+          className={`text-sm font-medium ${
+            isToday ? "text-[var(--accent)]" : "text-[var(--muted)]"
+          }`}
+        >
+          {calRange === "week"
+            ? day.toLocaleDateString("en-US", {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+              })
+            : day.getDate()}
+        </div>
+        <div className="mt-1 space-y-1">
+          {dayAssignments.map((a) => {
+            const c = a.courseId ? courseMap.get(a.courseId) : null;
+            const isSel = selected.has(a.id);
+            const isDragging = dragIds.includes(a.id);
+            return (
+              <div
+                key={a.id}
+                draggable
+                onClick={(e) => selectCard(a.id, dayAssignments, e)}
+                onDragStart={(e) => {
+                  const ids = idsToMove(a.id);
+                  setDragIds(ids);
+                  e.dataTransfer.setData(
+                    "text/assignment-ids",
+                    JSON.stringify(ids),
+                  );
+                  e.dataTransfer.setData("text/assignment-id", a.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={() => {
+                  setDragIds([]);
+                  setOverYmd(null);
+                }}
+                className={`cursor-grab truncate rounded px-1.5 py-1 text-[11px] text-white active:cursor-grabbing ${
+                  isDragging ? "opacity-40" : ""
+                } ${isSel ? "ring-2 ring-white ring-offset-1 ring-offset-black/20" : ""}`}
+                style={{ background: c?.color || "var(--accent)" }}
+                title={a.title}
+              >
+                {a.title}
+                {isSel && selected.size > 1 && dragIds[0] === a.id
+                  ? ` · ${selected.size}`
+                  : ""}
+              </div>
+            );
+          })}
+          {dayApps.map((app) => (
+            <a
+              key={app.id}
+              href="/admin/applications"
+              className="block truncate rounded border border-dashed border-[var(--accent)] bg-white/90 px-1.5 py-1 text-[11px] text-[var(--accent)] no-underline hover:bg-[var(--accent-soft)]"
+              title={`${app.kind}: ${app.title}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {app.title}
+            </a>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <section className="w-full">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 px-1">
-        <button
-          type="button"
-          className="rounded-lg px-3 py-1 text-sm text-[var(--muted)] hover:bg-black/5"
-          onClick={() => setMonth(new Date(year, mo - 1, 1))}
-        >
-          ←
-        </button>
-        <h3 className="display text-2xl">
-          {month.toLocaleString("en-US", { month: "long", year: "numeric" })}
-        </h3>
-        <button
-          type="button"
-          className="rounded-lg px-3 py-1 text-sm text-[var(--muted)] hover:bg-black/5"
-          onClick={() => setMonth(new Date(year, mo + 1, 1))}
-        >
-          →
-        </button>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            className="rounded-lg px-3 py-1 text-sm text-[var(--muted)] hover:bg-black/5"
+            onClick={() => shiftRange(-1)}
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-[var(--line)] bg-white px-2.5 py-1 text-xs"
+            onClick={goToday}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            className="rounded-lg px-3 py-1 text-sm text-[var(--muted)] hover:bg-black/5"
+            onClick={() => shiftRange(1)}
+          >
+            →
+          </button>
+        </div>
+        <h3 className="display text-center text-xl sm:text-2xl">{title}</h3>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {(
+            [
+              ["month", "Month"],
+              ["week", "Week"],
+            ] as [CalRange, string][]
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setCalRange(id);
+                if (id === "week") {
+                  setWeekAnchor(startOfWeek(new Date(year, mo, 15), weekStartsOn));
+                }
+              }}
+              className={`rounded-full px-2.5 py-1 text-xs ${
+                calRange === id
+                  ? "bg-[var(--accent)] text-white"
+                  : "border border-[var(--line)] bg-white/80"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <label className="flex items-center gap-1 text-xs text-[var(--muted)]">
+            Start
+            <select
+              className="rounded-md border border-[var(--line)] bg-white px-1.5 py-1 text-xs text-[var(--ink)]"
+              value={weekStartsOn}
+              onChange={(e) =>
+                setWeekStartsOn(Number(e.target.value) as WeekStart)
+              }
+            >
+              <option value={0}>Sunday</option>
+              <option value={1}>Monday</option>
+            </select>
+          </label>
+        </div>
       </div>
       <p className="mb-3 text-center text-xs text-[var(--muted)]">
-        Click to select · ⌘/Ctrl+click multi · Shift+click range · drag onto a
-        day
+        Assignments drag to reschedule · dashed chips are scholarship deadlines
         {selected.size > 0 && (
           <>
             {" · "}
@@ -558,96 +1004,23 @@ function CalendarView({
           </>
         )}
       </p>
-      <div className="grid grid-cols-7 gap-px text-center text-xs text-[var(--muted)]">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div key={d} className="py-2 font-medium">
-            {d}
-          </div>
-        ))}
-      </div>
-      <div className="grid min-h-[70vh] grid-cols-7 gap-px bg-[var(--line)]">
-        {cells.map((day, i) => (
-          <div
-            key={i}
-            onDragOver={(e) => {
-              if (!day) return;
-              e.preventDefault();
-              setOverDay(day);
-            }}
-            onDragLeave={() => setOverDay((d) => (d === day ? null : d))}
-            onDrop={(e) => {
-              e.preventDefault();
-              if (!day) return;
-              let ids: string[] = [];
-              try {
-                const raw = e.dataTransfer.getData("text/assignment-ids");
-                if (raw) ids = JSON.parse(raw) as string[];
-              } catch {
-                /* ignore */
-              }
-              if (!ids.length) {
-                const one =
-                  e.dataTransfer.getData("text/assignment-id") || dragIds[0];
-                if (one) ids = [one];
-              }
-              if (ids.length) onMoveDay(ids, dateForDay(day));
-              setDragIds([]);
-              setOverDay(null);
-              setSelected(new Set());
-            }}
-            className={`min-h-[7.5rem] p-2 text-left sm:min-h-[9rem] ${
-              overDay === day
-                ? "bg-[var(--accent-soft)]"
-                : "bg-[var(--bg)]"
-            }`}
-          >
-            {day && (
-              <>
-                <div className="text-sm font-medium text-[var(--muted)]">
-                  {day}
-                </div>
-                <div className="mt-1 space-y-1">
-                  {itemsForDay(day).map((a) => {
-                    const c = a.courseId ? courseMap.get(a.courseId) : null;
-                    const isSel = selected.has(a.id);
-                    const isDragging = dragIds.includes(a.id);
-                    return (
-                      <div
-                        key={a.id}
-                        draggable
-                        onClick={(e) => selectCard(a.id, itemsForDay(day), e)}
-                        onDragStart={(e) => {
-                          const ids = idsToMove(a.id);
-                          setDragIds(ids);
-                          e.dataTransfer.setData(
-                            "text/assignment-ids",
-                            JSON.stringify(ids),
-                          );
-                          e.dataTransfer.setData("text/assignment-id", a.id);
-                          e.dataTransfer.effectAllowed = "move";
-                        }}
-                        onDragEnd={() => {
-                          setDragIds([]);
-                          setOverDay(null);
-                        }}
-                        className={`cursor-grab truncate rounded px-1.5 py-1 text-[11px] text-white active:cursor-grabbing ${
-                          isDragging ? "opacity-40" : ""
-                        } ${isSel ? "ring-2 ring-white ring-offset-1 ring-offset-black/20" : ""}`}
-                        style={{ background: c?.color || "var(--accent)" }}
-                        title={`${a.title}${isSel && selected.size > 1 ? ` (+${selected.size - 1} more)` : ""}`}
-                      >
-                        {a.title}
-                        {isSel && selected.size > 1 && dragIds[0] === a.id
-                          ? ` · ${selected.size}`
-                          : ""}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        ))}
+      {calRange === "month" && (
+        <div className="grid grid-cols-7 gap-px text-center text-xs text-[var(--muted)]">
+          {labels.map((d) => (
+            <div key={d} className="py-2 font-medium">
+              {d}
+            </div>
+          ))}
+        </div>
+      )}
+      <div
+        className={`grid gap-px bg-[var(--line)] ${
+          calRange === "week" ? "grid-cols-1 sm:grid-cols-7" : "grid-cols-7"
+        } ${calRange === "week" ? "min-h-[70vh]" : ""}`}
+      >
+        {calRange === "week"
+          ? weekDays.map((d) => renderDayCell(d, toYmd(d)))
+          : monthCells.map((d, i) => renderDayCell(d, i))}
       </div>
     </section>
   );
@@ -659,12 +1032,14 @@ function KanbanView({
   kanbanBy,
   setKanbanBy,
   onDropCards,
+  onAddInColumn,
 }: {
   assignments: Assignment[];
   courses: Course[];
   kanbanBy: KanbanBy;
   setKanbanBy: (v: KanbanBy) => void;
   onDropCards: (ids: string[], columnId: string) => void;
+  onAddInColumn: (columnId: string) => void;
 }) {
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<string | null>(null);
@@ -887,6 +1262,13 @@ function KanbanView({
                 </p>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => onAddInColumn(col.id)}
+              className="mt-2 shrink-0 rounded-lg border border-dashed border-[var(--line)] px-2 py-1.5 text-xs text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            >
+              + Add
+            </button>
           </div>
         ))}
       </div>

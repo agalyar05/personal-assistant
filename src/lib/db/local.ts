@@ -51,7 +51,7 @@ async function readStore(): Promise<Store> {
       },
       listItems: (parsed.listItems || []).map((i) => ({
         ...i,
-        difficulty: i.difficulty || "medium",
+        difficulty: i.difficulty || "unassigned",
       })),
       reminders: parsed.reminders || [],
       processedMessages: parsed.processedMessages || [],
@@ -148,7 +148,7 @@ export async function addListItems(
       listName,
       text,
       checked: false,
-      difficulty: "medium",
+      difficulty: "unassigned",
       sortOrder: order++,
       createdAt: new Date().toISOString(),
     };

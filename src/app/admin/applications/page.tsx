@@ -243,7 +243,7 @@ export default function ApplicationsPage() {
         {!editingId && (
           <div className="mt-3 space-y-2">
             <label className="block text-xs text-[var(--muted)]">
-              Paste a scholarship / job blurb — we fill what we can
+              Paste a scholarship / job blurb — fills title (looks for scholarship-like names), link, deadline, and a short key-point summary
               <textarea
                 className="mt-1 min-h-24 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)]"
                 placeholder="Paste email, listing, or notes here…"
@@ -512,7 +512,9 @@ export default function ApplicationsPage() {
           ))}
           {!visible.length && (
             <p className="text-sm text-[var(--muted)]">
-              No applications yet — add your first above.
+              {apps.length
+                ? "Nothing matches this filter — try All."
+                : "No applications yet — paste a blurb above, fill fields, then click Add application. If save fails, run supabase/migrations/007_applications_goals.sql in the Supabase SQL editor."}
             </p>
           )}
         </div>

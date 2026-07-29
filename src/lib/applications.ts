@@ -71,7 +71,13 @@ export type ParsedApplicationPaste = {
   notes: string;
 };
 
-/** Pull title / link / deadline / description from a pasted blurb; blanks if missing. */
+const TITLE_NOISE =
+  /^(dear|hi|hello|hey|apply\s+now|click\s+here|forwarded|from:|to:|subject:|re:|fw:|https?:)/i;
+
+const TITLE_HINT =
+  /\b(scholarship|scholarships|scholars?|fellowship|fellowships|grant|grants|award|awards|bursary|internship|internships|opportunity|program|prize|endowment)\b/i;
+
+/** Pull title / link / deadline / short summary from a pasted blurb; blanks if missing. */
 export function parseApplicationPaste(raw: string): ParsedApplicationPaste {
   const text = raw.replace(/\r/g, "").trim();
   const empty: ParsedApplicationPaste = {
@@ -87,6 +93,7 @@ export function parseApplicationPaste(raw: string): ParsedApplicationPaste {
   const lower = text.toLowerCase();
   let kind: ParsedApplicationPaste["kind"] = "";
   if (/\bscholarship\b/.test(lower)) kind = "scholarship";
+  else if (/\bfellowship\b/.test(lower)) kind = "scholarship";
   else if (/\binternship\b/.test(lower)) kind = "internship";
   else if (/\bgrant\b/.test(lower)) kind = "grant";
   else if (/\b(job|position|role)\b/.test(lower)) kind = "job";
@@ -95,27 +102,12 @@ export function parseApplicationPaste(raw: string): ParsedApplicationPaste {
   const urlMatch = text.match(/https?:\/\/[^\s)>\]]+/i);
   const url = urlMatch ? urlMatch[0].replace(/[.,;]+$/, "") : "";
 
-  const labeledTitle =
-    text.match(
-      /(?:^|\n)\s*(?:title|name|scholarship|opportunity|program)\s*[:\-–]\s*(.+)/i,
-    )?.[1]?.trim() || "";
-
   const lines = text
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
 
-  let title = labeledTitle;
-  if (!title) {
-    const first = lines.find(
-      (l) =>
-        !/^https?:\/\//i.test(l) &&
-        !/^(deadline|due|apply by|amount|award|eligibility)/i.test(l),
-    );
-    title = (first || "").replace(/^#+\s*/, "").slice(0, 120);
-  }
-  // Strip trailing URL from title line
-  title = title.replace(/\s*https?:\/\/\S+/i, "").trim();
+  const title = extractOpportunityTitle(text, lines);
 
   const deadline =
     extractDeadlineYmd(text) ||
@@ -125,22 +117,189 @@ export function parseApplicationPaste(raw: string): ParsedApplicationPaste {
       )?.[1] || "",
     );
 
-  const descBits: string[] = [];
-  for (const line of lines) {
-    if (/^https?:\/\//i.test(line)) continue;
-    if (title && line === title) continue;
-    if (/^(deadline|due|apply by)/i.test(line) && deadline) continue;
-    descBits.push(line);
-  }
-  let description = descBits.join("\n").trim();
-  if (description.length > 1200) description = description.slice(0, 1197) + "…";
-  // Don't duplicate title as whole description
-  if (description === title) description = "";
+  const amount = text.match(/\$[\d,]+(?:\.\d{2})?(?:\s*(?:per\s+year|\/yr|annually|each)?)?/i);
+  const notes = amount ? `Amount mentioned: ${amount[0].trim()}` : "";
 
-  const amount = text.match(/\$[\d,]+(?:\.\d{2})?/);
-  const notes = amount ? `Amount mentioned: ${amount[0]}` : "";
+  const description = summarizePaste(text, lines, {
+    title,
+    deadline,
+    amount: amount?.[0]?.trim() || "",
+  });
 
   return { title, kind, url, description, deadline, notes };
+}
+
+function cleanTitleCandidate(s: string): string {
+  return s
+    .replace(/^#+\s*/, "")
+    .replace(/^["'“”]+|["'“”]+$/g, "")
+    .replace(/\s*https?:\/\/\S+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function scoreTitleCandidate(line: string): number {
+  const s = cleanTitleCandidate(line);
+  if (!s || s.length < 4) return -1;
+  if (TITLE_NOISE.test(s)) return -1;
+  if (/^https?:\/\//i.test(s)) return -1;
+  if (/^(deadline|due|apply by|amount|award\b|eligibility|requirements?)\b/i.test(s)) {
+    return -1;
+  }
+  // Prefer short name-like lines, not paragraphs
+  if (s.length > 100) return -1;
+  if (s.split(/\s+/).length > 16) return -1;
+
+  let score = 0;
+  if (TITLE_HINT.test(s)) score += 8;
+  if (/\bscholar\b/i.test(s)) score += 4;
+  if (/\b(named|memorial|foundation|endowed)\b/i.test(s)) score += 2;
+  // "X Scholarship" / "The Foo Award" style (same line only)
+  if (
+    /\b[A-Z][\w'’.-]*(?:[ \t]+[A-Z][\w'’.-]*){0,6}[ \t]+(Scholarship|Scholarships|Scholars|Fellowship|Grant|Award|Program|Internship|Prize)s?\b/.test(
+      s,
+    )
+  ) {
+    score += 6;
+  }
+  // Title Case-ish
+  const words = s.split(/\s+/);
+  const caps = words.filter((w) => /^[A-Z]/.test(w)).length;
+  if (caps >= Math.min(2, words.length) && words.length <= 12) score += 2;
+  // Penalize sentence-y lines
+  if (/[.!?]$/.test(s) && s.length > 40) score -= 3;
+  if (/\b(you|your|please|students who|we are|looking for)\b/i.test(s)) score -= 4;
+  // Prefer earlier lines slightly
+  return score;
+}
+
+function extractOpportunityTitle(text: string, lines: string[]): string {
+  const labeled =
+    text.match(
+      /(?:^|\n)\s*(?:title|name|scholarship(?:\s+name)?|opportunity|program|fellowship)\s*[:\-–]\s*(.+)/i,
+    )?.[1]?.trim() || "";
+  if (labeled) {
+    const cleaned = cleanTitleCandidate(labeled.split(/[.|]/)[0] || labeled);
+    if (cleaned) return cleaned;
+  }
+
+  // Scan all lines + short phrases that look like opportunity names
+  let best = "";
+  let bestScore = 0;
+  for (const line of lines) {
+    const score = scoreTitleCandidate(line);
+    if (score > bestScore) {
+      bestScore = score;
+      best = cleanTitleCandidate(line);
+    }
+  }
+
+  // Also try inline patterns anywhere in the blob (same line / no cross-line)
+  const inline = text.match(
+    /\b([A-Z][\w'’.-]*(?:[ \t]+[A-Z&][\w'’.-]*){0,8}[ \t]+(?:Scholarship|Scholarships|Scholars|Fellowship|Grant|Award|Program|Internship|Prize)s?)\b/,
+  );
+  if (inline?.[1]) {
+    const cand = cleanTitleCandidate(inline[1]);
+    const score = scoreTitleCandidate(cand) + 3;
+    if (score > bestScore) {
+      bestScore = score;
+      best = cand;
+    }
+  }
+
+  // Need a real opportunity-ish hit; don't fall back to greeting/first line
+  if (bestScore >= 6 && best) return best;
+  return "";
+}
+
+/** Short key-point summary — not the full paste. */
+function summarizePaste(
+  text: string,
+  lines: string[],
+  ctx: { title: string; deadline: string; amount: string },
+): string {
+  const points: string[] = [];
+
+  if (ctx.amount) points.push(`Award: ${ctx.amount}`);
+
+  const who =
+    text.match(
+      /(?:open to|intended for|eligible(?:\s+students?)?|who can apply)\s*[:\-–]?\s*([^\n.]{8,120})/i,
+    )?.[1]?.trim() ||
+    text.match(
+      /\bfor\s*:\s*([^\n.]{8,120})/i,
+    )?.[1]?.trim() ||
+    text.match(
+      /\b((?:undergraduate|graduate|high school|college|STEM|women|minority|first[- ]gen(?:eration)?)[^\n.]{0,80})/i,
+    )?.[1]?.trim();
+  if (
+    who &&
+    !/^(warded|warded message|applicants?\b)/i.test(who) &&
+    !/^https?:/i.test(who)
+  ) {
+    points.push(`For: ${who.replace(/\s+/g, " ").slice(0, 100)}`);
+  }
+
+  const req =
+    text.match(
+      /(?:requirements?|eligibility|must(?:\s+be)?|need to)\s*[:\-–]?\s*([^\n]{8,140})/i,
+    )?.[1]?.trim();
+  if (req) {
+    const cleaned = req
+      .replace(/\s+/g, " ")
+      .replace(/\bapply by\b.+$/i, "")
+      .trim()
+      .slice(0, 110);
+    if (cleaned.length >= 8) points.push(`Need: ${cleaned}`);
+  }
+
+  // One short “what it is” sentence that isn’t the title
+  const prose = text.replace(/\s+/g, " ").trim();
+  const sentences = prose
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => s.length > 25 && s.length < 160);
+  for (const s of sentences) {
+    if (ctx.title && s.includes(ctx.title)) continue;
+    if (/deadline|apply by|click here|unsubscribe|forwarded|eligibility:/i.test(s)) {
+      continue;
+    }
+    if (ctx.amount && s.includes(ctx.amount) && points.some((p) => p.startsWith("Award:"))) {
+      continue;
+    }
+    if (/\b(scholarship|fellowship|grant|award|program|internship)\b/i.test(s)) {
+      points.push(s.replace(/\s+/g, " ").trim());
+      break;
+    }
+  }
+
+  // Bullet-ish short lines as extras (max 2)
+  let bullets = 0;
+  for (const line of lines) {
+    if (bullets >= 2) break;
+    if (!/^[-•*]\s+/.test(line) && !/^\d+[.)]\s+/.test(line)) continue;
+    const body = line.replace(/^[-•*\d.)\s]+/, "").trim();
+    if (body.length < 8 || body.length > 100) continue;
+    if (ctx.title && body === ctx.title) continue;
+    if (points.some((p) => p.includes(body))) continue;
+    points.push(body);
+    bullets++;
+  }
+
+  // Dedupe / trim
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of points) {
+    const key = p.toLowerCase().slice(0, 40);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+    if (out.join(" · ").length > 320) break;
+  }
+
+  let summary = out.slice(0, 4).join(" · ");
+  if (summary.length > 360) summary = summary.slice(0, 357) + "…";
+  return summary;
 }
 
 function extractDeadlineYmd(chunk: string): string {

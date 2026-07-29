@@ -120,7 +120,7 @@ export type Assignment = {
   createdAt: string;
 };
 
-export type ListDifficulty = "easy" | "medium" | "hard";
+export type ListDifficulty = "unassigned" | "easy" | "medium" | "hard";
 
 export type ListItem = {
   id: string;

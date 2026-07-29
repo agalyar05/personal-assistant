@@ -120,7 +120,7 @@ function rowToListItem(row: Record<string, unknown>): ListItem {
     listName: String(row.list_name),
     text: String(row.text),
     checked: Boolean(row.checked),
-    difficulty: (String(row.difficulty || "medium") as ListItem["difficulty"]),
+    difficulty: (String(row.difficulty || "unassigned") as ListItem["difficulty"]),
     sortOrder: Number(row.sort_order),
     createdAt: String(row.created_at),
   };
@@ -159,7 +159,7 @@ export async function addListItems(
         list_name: listName,
         text,
         checked: false,
-        difficulty: "medium",
+        difficulty: "unassigned",
         sort_order: order++,
       })
       .select("*")
