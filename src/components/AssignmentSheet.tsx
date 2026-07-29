@@ -57,9 +57,12 @@ const COL_META: { key: ColKey; label: string; width: string }[] = [
 
 const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 const STORAGE_KEY = "pa_assignment_columns";
+const SORTABLE_COLS = new Set<ColKey>(["courseId", "dueAt", "status"]);
 
 type FillMode = "auto" | "daily" | "weekly";
 type CellPos = { row: number; col: number };
+type SortDir = "asc" | "desc";
+type SortState = { key: ColKey; dir: SortDir };
 
 function normalizeUrl(raw: string): string {
   const s = raw.trim();
@@ -126,16 +129,13 @@ export function AssignmentSheet({
     y: number;
     row: number;
   } | null>(null);
+  const [sort, setSort] = useState<SortState | null>(null);
   const fillStartRef = useRef<CellPos | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement | HTMLSelectElement>>(
     new Map(),
   );
-
-  const rows = useMemo(
-    () => [...assignments].sort((a, b) => a.sortOrder - b.sortOrder),
-    [assignments],
-  );
+  const headerDraggedRef = useRef(false);
 
   const courseLabel = useMemo(() => {
     const m = new Map<string, string>();
@@ -148,6 +148,41 @@ export function AssignmentSheet({
     for (const c of courses) m.set(c.id, c.color);
     return m;
   }, [courses]);
+
+  const rows = useMemo(() => {
+    const list = [...assignments];
+    if (!sort || !SORTABLE_COLS.has(sort.key)) {
+      return list.sort((a, b) => a.sortOrder - b.sortOrder);
+    }
+    const mul = sort.dir === "asc" ? 1 : -1;
+    return list.sort((a, b) => {
+      let cmp = 0;
+      if (sort.key === "courseId") {
+        const la = a.courseId ? courseLabel.get(a.courseId) || "" : "";
+        const lb = b.courseId ? courseLabel.get(b.courseId) || "" : "";
+        if (!la && !lb) cmp = 0;
+        else if (!la) return 1;
+        else if (!lb) return -1;
+        else cmp = la.localeCompare(lb, undefined, { sensitivity: "base" });
+      } else if (sort.key === "dueAt") {
+        const da = a.dueAt || "";
+        const db = b.dueAt || "";
+        if (!da && !db) cmp = 0;
+        else if (!da) return 1;
+        else if (!db) return -1;
+        else cmp = da.localeCompare(db);
+      } else if (sort.key === "status") {
+        cmp =
+          ASSIGNMENT_STATUSES.indexOf(a.status) -
+          ASSIGNMENT_STATUSES.indexOf(b.status);
+      }
+      if (cmp === 0) {
+        cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+      }
+      if (cmp === 0) cmp = a.sortOrder - b.sortOrder;
+      return cmp * mul;
+    });
+  }, [assignments, sort, courseLabel]);
 
   useEffect(() => {
     try {
@@ -657,8 +692,59 @@ export function AssignmentSheet({
     for (const p of patchRows) {
       onChangeLocal(p.id, { sortOrder: p.sortOrder });
     }
+    setSort(null);
     await onBulk(patchRows);
     onMsg("Rows reordered");
+  }
+
+  async function sortByColumn(key: ColKey) {
+    if (!SORTABLE_COLS.has(key)) return;
+    const nextDir: SortDir =
+      sort?.key === key && sort.dir === "asc" ? "desc" : "asc";
+    const nextSort: SortState = { key, dir: nextDir };
+    setSort(nextSort);
+
+    const mul = nextDir === "asc" ? 1 : -1;
+    const sorted = [...assignments].sort((a, b) => {
+      let cmp = 0;
+      if (key === "courseId") {
+        const la = a.courseId ? courseLabel.get(a.courseId) || "" : "";
+        const lb = b.courseId ? courseLabel.get(b.courseId) || "" : "";
+        if (!la && !lb) cmp = 0;
+        else if (!la) return 1;
+        else if (!lb) return -1;
+        else cmp = la.localeCompare(lb, undefined, { sensitivity: "base" });
+      } else if (key === "dueAt") {
+        const da = a.dueAt || "";
+        const db = b.dueAt || "";
+        if (!da && !db) cmp = 0;
+        else if (!da) return 1;
+        else if (!db) return -1;
+        else cmp = da.localeCompare(db);
+      } else if (key === "status") {
+        cmp =
+          ASSIGNMENT_STATUSES.indexOf(a.status) -
+          ASSIGNMENT_STATUSES.indexOf(b.status);
+      }
+      if (cmp === 0) {
+        cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+      }
+      if (cmp === 0) cmp = a.sortOrder - b.sortOrder;
+      return cmp * mul;
+    });
+
+    const patchRows = sorted.map((row, i) => ({
+      id: row.id,
+      title: row.title,
+      sortOrder: i + 1,
+    }));
+    for (const p of patchRows) {
+      onChangeLocal(p.id, { sortOrder: p.sortOrder });
+    }
+    await onBulk(patchRows);
+    const label =
+      key === "courseId" ? "class" : key === "dueAt" ? "due date" : "progress";
+    onMsg(`Sorted by ${label} (${nextDir === "asc" ? "A→Z" : "Z→A"})`);
   }
 
   function selectedRowIndexes(): number[] {
@@ -936,7 +1022,7 @@ export function AssignmentSheet({
           Fill down
         </button>
         <span className="hidden text-xs text-[var(--muted)] lg:inline">
-          Right-click rows · drag # to move · Shift+click · Enter/F2 · ⌘/Ctrl+C/V
+          Click Class / Due / Progress to sort · drag headers to move columns
         </span>
       </div>
 
@@ -960,17 +1046,53 @@ export function AssignmentSheet({
               </th>
               {cols.map((key) => {
                 const meta = metaByKey.get(key)!;
+                const sortable = SORTABLE_COLS.has(key);
+                const activeSort = sort?.key === key;
                 return (
                   <th
                     key={key}
                     draggable
-                    onDragStart={() => setDragCol(key)}
+                    onDragStart={() => {
+                      headerDraggedRef.current = false;
+                      setDragCol(key);
+                    }}
+                    onDrag={() => {
+                      headerDraggedRef.current = true;
+                    }}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => onHeaderDrop(key)}
-                    className={`cursor-grab border-b border-r border-[var(--line)] bg-[var(--card)] px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] active:cursor-grabbing ${meta.width}`}
-                    title="Drag to reorder columns"
+                    onClick={() => {
+                      if (headerDraggedRef.current) return;
+                      if (sortable) void sortByColumn(key);
+                    }}
+                    className={`border-b border-r border-[var(--line)] bg-[var(--card)] px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] ${meta.width} ${
+                      sortable
+                        ? "cursor-pointer select-none hover:text-[var(--ink)]"
+                        : "cursor-grab active:cursor-grabbing"
+                    } ${activeSort ? "text-[var(--accent)]" : ""}`}
+                    title={
+                      sortable
+                        ? "Click to sort · drag to reorder columns"
+                        : "Drag to reorder columns"
+                    }
                   >
-                    {meta.label}
+                    <span className="inline-flex items-center gap-1">
+                      {meta.label}
+                      {sortable && (
+                        <span
+                          className={`text-[9px] ${
+                            activeSort ? "opacity-100" : "opacity-35"
+                          }`}
+                          aria-hidden
+                        >
+                          {activeSort
+                            ? sort.dir === "asc"
+                              ? "▲"
+                              : "▼"
+                            : "↕"}
+                        </span>
+                      )}
+                    </span>
                   </th>
                 );
               })}
