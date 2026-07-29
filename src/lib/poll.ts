@@ -87,7 +87,7 @@ function addDaysYmd(ymd: string, days: number): string {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
-async function maybeMorningBriefing(): Promise<void> {
+async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   const settings = await db.getSettings();
   const tz = settings.timezone || "America/Detroit";
   const now = new Date();
@@ -98,11 +98,11 @@ async function maybeMorningBriefing(): Promise<void> {
   const schedM = m || 0;
   const dueMins = hour * 60 + minute;
   const schedMins = schedH * 60 + schedM;
-  if (dueMins < schedMins) {
+  if (!opts?.force && dueMins < schedMins) {
     log("Morning briefing not due yet.");
     return;
   }
-  if (settings.lastMorningBriefing === today) {
+  if (!opts?.force && settings.lastMorningBriefing === today) {
     log("Morning briefing already sent today.");
     return;
   }
@@ -153,16 +153,34 @@ async function maybeMorningBriefing(): Promise<void> {
     dueBlock = "Due today: couldn't load.";
   }
 
-  // Short separate texts — one long emoji-heavy SMS often arrives as just the greeting via GV.
+  const closers = [
+    "Have a great day!",
+    "Up and at em!",
+    "You've got this — make it count.",
+    "Go get em!",
+    "Knock it out of the park today.",
+    "Have a solid day!",
+    "Onward!",
+  ];
+  // Stable pick for the calendar day (not a random quote).
+  const dayNum = Number(today.replace(/-/g, "")) || 0;
+  const closer = closers[dayNum % closers.length]!;
+
+  // Order: calendar → due → weather → closer. Short parts for GV reliability.
   const parts = [
     `Good morning!\n\n${calendarBlock}`,
-    weather,
     dueBlock,
+    `${weather}\n\n${closer}`,
   ];
   log(`Briefing parts: ${parts.map((p) => p.length).join(", ")} chars`);
   await sendSmsParts(parts);
   await db.updateSettings({ lastMorningBriefing: today });
   log("Morning briefing sent.");
+}
+
+/** Force-send the morning briefing (ignores schedule + already-sent-today). */
+export async function sendMorningBriefingNow(): Promise<void> {
+  await maybeMorningBriefing({ force: true });
 }
 
 export async function runPollCycle(opts?: {
