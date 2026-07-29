@@ -70,6 +70,10 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ item });
   }
+  if (body.action === "remove" && body.id) {
+    await db.deleteListItem(body.id);
+    return NextResponse.json({ ok: true });
+  }
   if (body.action === "reorder" && Array.isArray(body.ids)) {
     await Promise.all(
       body.ids.map((id, i) => db.updateListItem(id, { sortOrder: i + 1 })),

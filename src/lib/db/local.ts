@@ -200,6 +200,12 @@ export async function updateListItem(
   return store.listItems[idx]!;
 }
 
+export async function deleteListItem(id: string): Promise<void> {
+  const store = await readStore();
+  store.listItems = store.listItems.filter((i) => i.id !== id);
+  await writeStore(store);
+}
+
 export async function removeListItems(
   listName: string,
   items: string[],

@@ -223,6 +223,12 @@ export async function updateListItem(
   return rowToListItem(data as Record<string, unknown>);
 }
 
+export async function deleteListItem(id: string): Promise<void> {
+  if (!hasSupabase()) return local.deleteListItem(id);
+  const sb = client();
+  await sb.from("list_items").delete().eq("id", id);
+}
+
 export async function removeListItems(
   listName: string,
   items: string[],

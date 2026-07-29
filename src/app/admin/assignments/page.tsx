@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   Application,
+  ApplicationKind,
+  ApplicationStatus,
   Assignment,
   AssignmentStatus,
   Course,
@@ -26,6 +28,12 @@ import {
 import { normalizeApplicationUrl } from "@/lib/applications";
 import { APPLICATION_STATUS_LABELS } from "@/lib/application-meta";
 import { isApplicationsGroup } from "@/lib/courses";
+import {
+  appIdFromSheetId,
+  applicationToSheetRow,
+  assignmentStatusToApp,
+  isAppSheetId,
+} from "@/lib/app-sheet";
 
 type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
@@ -161,7 +169,61 @@ export default function AssignmentsPage() {
     [openApps, taskHorizonDays],
   );
 
+  /** Assignments + applications as sheet/kanban rows. */
+  const sheetRows = useMemo(() => {
+    const appsCourseId = applicationsGroup?.id || null;
+    const appRows = horizonApps.map((a) =>
+      applicationToSheetRow(a, appsCourseId),
+    );
+    return [...horizonAssignments, ...appRows].sort((a, b) => {
+      const ad = a.dueAt || "9999";
+      const bd = b.dueAt || "9999";
+      if (ad !== bd) return ad.localeCompare(bd);
+      return a.sortOrder - b.sortOrder || a.title.localeCompare(b.title);
+    });
+  }, [horizonAssignments, horizonApps, applicationsGroup?.id]);
+
+  async function patchApplicationFromSheet(
+    patch: Partial<Assignment> & { id: string },
+  ) {
+    const realId = appIdFromSheetId(patch.id);
+    const app = applications.find((a) => a.id === realId);
+    if (!app) return;
+    const body: Record<string, unknown> = {
+      id: realId,
+      title: patch.title !== undefined ? patch.title : app.title,
+    };
+    if (patch.link !== undefined) body.url = patch.link;
+    if (patch.dueAt !== undefined) body.deadline = patch.dueAt;
+    if (patch.assignmentType !== undefined) {
+      body.kind = patch.assignmentType as ApplicationKind;
+    }
+    if (patch.notes !== undefined) body.notes = patch.notes;
+    if (patch.status !== undefined) {
+      body.status = assignmentStatusToApp(
+        patch.status,
+        app.status,
+      ) as ApplicationStatus;
+    }
+    // Keep apps pinned to Applications group on sheet
+    const res = await fetch("/api/applications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      setMsg("Application save failed");
+      await load();
+      return;
+    }
+    await load();
+  }
+
   async function patchAssignment(patch: Partial<Assignment> & { id: string }) {
+    if (isAppSheetId(patch.id)) {
+      await patchApplicationFromSheet(patch);
+      return;
+    }
     const prev = assignments.find((a) => a.id === patch.id);
     setAssignments((list) =>
       list.map((a) => (a.id === patch.id ? { ...a, ...patch } : a)),
@@ -176,12 +238,28 @@ export default function AssignmentsPage() {
       await load();
       return;
     }
-    if (
-      patch.status === "submitted" &&
-      prev?.status !== "submitted"
-    ) {
+    if (patch.status === "submitted" && prev?.status !== "submitted") {
       setCelebrate(true);
     }
+  }
+
+  async function removeRow(id: string) {
+    if (isAppSheetId(id)) {
+      const realId = appIdFromSheetId(id);
+      await fetch("/api/applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id: realId }),
+      });
+      setApplications((prev) => prev.filter((a) => a.id !== realId));
+      return;
+    }
+    await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "delete", id }),
+    });
+    setAssignments((prev) => prev.filter((a) => a.id !== id));
   }
 
   async function addBlankRow() {
@@ -209,14 +287,23 @@ export default function AssignmentsPage() {
     const ordered = [...assignments].sort(
       (a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
     );
-    const visible = ordered.filter((a) =>
-      withinTaskHorizon(a.dueAt, taskHorizonDays),
-    );
+    const visible = sheetRows;
     const anchor = visible[index];
     let insertAt = ordered.length;
     if (anchor) {
-      const fullIdx = ordered.findIndex((a) => a.id === anchor.id);
-      insertAt = where === "above" ? fullIdx : fullIdx + 1;
+      if (isAppSheetId(anchor.id)) {
+        const cut = where === "above" ? index : index + 1;
+        const before = visible
+          .slice(0, cut)
+          .filter((r) => !isAppSheetId(r.id));
+        const lastAsn = before[before.length - 1];
+        insertAt = lastAsn
+          ? ordered.findIndex((a) => a.id === lastAsn.id) + 1
+          : 0;
+      } else {
+        const fullIdx = ordered.findIndex((a) => a.id === anchor.id);
+        insertAt = where === "above" ? fullIdx : fullIdx + 1;
+      }
     }
     insertAt = Math.max(0, Math.min(ordered.length, insertAt));
 
@@ -290,23 +377,24 @@ export default function AssignmentsPage() {
     setMsg(`Default view: ${v}`);
   }
 
-  async function removeRow(id: string) {
-    await fetch("/api/assignments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "delete", id }),
-    });
-    setAssignments((prev) => prev.filter((a) => a.id !== id));
-  }
-
   async function bulkSave(
     rows: (Partial<Assignment> & { title?: string; id?: string })[],
   ) {
-    await fetch("/api/assignments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "bulk", rows }),
-    });
+    const appRows = rows.filter((r) => r.id && isAppSheetId(r.id));
+    const asnRows = rows.filter((r) => !r.id || !isAppSheetId(r.id));
+    for (const row of appRows) {
+      if (!row.id) continue;
+      await patchApplicationFromSheet(
+        row as Partial<Assignment> & { id: string },
+      );
+    }
+    if (asnRows.length) {
+      await fetch("/api/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "bulk", rows: asnRows }),
+      });
+    }
     await load();
   }
 
@@ -390,13 +478,34 @@ export default function AssignmentsPage() {
 
       {view === "sheet" && (
         <AssignmentSheet
-          assignments={horizonAssignments}
+          assignments={sheetRows}
           courses={courses}
-          onChangeLocal={(id, patch) =>
+          onChangeLocal={(id, patch) => {
+            if (isAppSheetId(id)) {
+              const realId = appIdFromSheetId(id);
+              setApplications((prev) =>
+                prev.map((a) => {
+                  if (a.id !== realId) return a;
+                  const next = { ...a };
+                  if (patch.title !== undefined) next.title = patch.title;
+                  if (patch.link !== undefined) next.url = patch.link || "";
+                  if (patch.dueAt !== undefined) next.deadline = patch.dueAt;
+                  if (patch.assignmentType !== undefined) {
+                    next.kind = patch.assignmentType as ApplicationKind;
+                  }
+                  if (patch.notes !== undefined) next.notes = patch.notes;
+                  if (patch.status !== undefined) {
+                    next.status = assignmentStatusToApp(patch.status, a.status);
+                  }
+                  return next;
+                }),
+              );
+              return;
+            }
             setAssignments((prev) =>
               prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
-            )
-          }
+            );
+          }}
           onPatch={patchAssignment}
           onAddRow={addBlankRow}
           onInsertRow={insertRowAt}
@@ -461,11 +570,13 @@ export default function AssignmentsPage() {
 
       {view === "kanban" && (
         <KanbanView
-          assignments={horizonAssignments}
+          assignments={sheetRows}
           courses={courses}
           kanbanBy={kanbanBy}
           setKanbanBy={setKanbanBy}
           onAddInColumn={(columnId) => void addInKanbanColumn(columnId)}
+          onDelete={(id) => void removeRow(id)}
+          onRename={(id, title) => void patchAssignment({ id, title })}
           onDropCards={(ids, columnId) => {
             void (async () => {
               const patch =
@@ -479,7 +590,15 @@ export default function AssignmentsPage() {
                         courseId: columnId === "none" ? null : columnId,
                       };
               await Promise.all(
-                ids.map((id) => patchAssignment({ id, ...patch })),
+                ids.map((id) => {
+                  if (isAppSheetId(id) && kanbanBy === "class") {
+                    return Promise.resolve();
+                  }
+                  if (isAppSheetId(id) && kanbanBy === "difficulty") {
+                    return Promise.resolve();
+                  }
+                  return patchAssignment({ id, ...patch });
+                }),
               );
             })();
           }}
@@ -1129,6 +1248,8 @@ function KanbanView({
   setKanbanBy,
   onDropCards,
   onAddInColumn,
+  onDelete,
+  onRename,
 }: {
   assignments: Assignment[];
   courses: Course[];
@@ -1136,18 +1257,36 @@ function KanbanView({
   setKanbanBy: (v: KanbanBy) => void;
   onDropCards: (ids: string[], columnId: string) => void;
   onAddInColumn: (columnId: string) => void;
+  onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
 }) {
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelected, setLastSelected] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
+    null,
+  );
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setSelected(new Set());
+      if (e.key === "Escape") {
+        setSelected(new Set());
+        setMenu(null);
+        setEditId(null);
+      }
+    }
+    function onClick() {
+      setMenu(null);
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("click", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("click", onClick);
+    };
   }, []);
 
   useEffect(() => {
@@ -1244,7 +1383,7 @@ function KanbanView({
           </button>
         ))}
         <span className="self-center text-xs text-[var(--muted)]">
-          Click · ⌘/Ctrl+click · Shift+click, then drag the group
+          Double-click to edit · right-click to delete · drag to move
           {selected.size > 0 && (
             <>
               {" · "}
@@ -1307,12 +1446,33 @@ function KanbanView({
               {col.items.map((a) => {
                 const isSel = selected.has(a.id);
                 const isDragging = dragIds.includes(a.id);
+                const isEditing = editId === a.id;
                 return (
                   <div
                     key={a.id}
-                    draggable
-                    onClick={(e) => selectCard(a.id, col.items, e)}
+                    draggable={!isEditing}
+                    onClick={(e) => {
+                      if (isEditing) return;
+                      selectCard(a.id, col.items, e);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setMenu(null);
+                      setEditId(a.id);
+                      setEditText(a.title);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSelected(new Set([a.id]));
+                      setLastSelected(a.id);
+                      setMenu({ id: a.id, x: e.clientX, y: e.clientY });
+                    }}
                     onDragStart={(e) => {
+                      if (isEditing) {
+                        e.preventDefault();
+                        return;
+                      }
                       const ids = idsToMove(a.id);
                       setDragIds(ids);
                       e.dataTransfer.setData(
@@ -1337,18 +1497,50 @@ function KanbanView({
                     } ${isDragging ? "opacity-50" : ""}`}
                   >
                     <div className="flex items-start justify-between gap-1">
-                      <div className="text-xs font-medium leading-snug sm:text-sm">
-                        {a.title}
-                      </div>
-                      {isSel && selected.size > 1 && (
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const t = editText.trim();
+                              if (t && t !== a.title) onRename(a.id, t);
+                              setEditId(null);
+                            } else if (e.key === "Escape") {
+                              setEditId(null);
+                            }
+                          }}
+                          onBlur={() => {
+                            const t = editText.trim();
+                            if (t && t !== a.title) onRename(a.id, t);
+                            setEditId(null);
+                          }}
+                          className="w-full rounded border border-[var(--accent)] bg-white px-1.5 py-0.5 text-xs font-medium sm:text-sm"
+                        />
+                      ) : (
+                        <div className="text-xs font-medium leading-snug sm:text-sm">
+                          {isAppSheetId(a.id) && (
+                            <span className="mr-1 text-[10px] font-normal text-[var(--muted)] no-underline">
+                              App
+                            </span>
+                          )}
+                          {a.title}
+                        </div>
+                      )}
+                      {isSel && selected.size > 1 && !isEditing && (
                         <span className="shrink-0 text-[10px] text-[var(--accent)]">
                           {selected.size}
                         </span>
                       )}
                     </div>
-                    <div className="mt-0.5 text-[10px] text-[var(--muted)] no-underline sm:text-xs">
-                      {a.dueAt ? formatDueDate(a.dueAt) : "No due date"}
-                    </div>
+                    {!isEditing && (
+                      <div className="mt-0.5 text-[10px] text-[var(--muted)] no-underline sm:text-xs">
+                        {a.dueAt ? formatDueDate(a.dueAt) : "No due date"}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1368,6 +1560,41 @@ function KanbanView({
           </div>
         ))}
       </div>
+      {menu && (
+        <div
+          className="fixed z-50 min-w-[140px] rounded-lg border border-[var(--line)] bg-white py-1 shadow-lg"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="block w-full px-3 py-1.5 text-left text-sm hover:bg-[var(--accent-soft)]"
+            onClick={() => {
+              const card = assignments.find((x) => x.id === menu.id);
+              setEditId(menu.id);
+              setEditText(card?.title || "");
+              setMenu(null);
+            }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="block w-full px-3 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
+            onClick={() => {
+              onDelete(menu.id);
+              setMenu(null);
+              setSelected((prev) => {
+                const next = new Set(prev);
+                next.delete(menu.id);
+                return next;
+              });
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
     </section>
   );
 }

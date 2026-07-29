@@ -39,6 +39,11 @@ export default function TodoPage() {
   const [celebrate, setCelebrate] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelected, setLastSelected] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
+    null,
+  );
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   const load = useCallback(async () => {
     const res = await fetch("/api/lists?list=todo&all=1");
@@ -57,10 +62,21 @@ export default function TodoPage() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setSelected(new Set());
+      if (e.key === "Escape") {
+        setSelected(new Set());
+        setMenu(null);
+        setEditId(null);
+      }
+    }
+    function onClick() {
+      setMenu(null);
     }
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("click", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("click", onClick);
+    };
   }, []);
 
   const columns = useMemo(() => {
@@ -165,6 +181,32 @@ export default function TodoPage() {
     setSelected(new Set());
   }
 
+  async function deleteItem(id: string) {
+    await fetch("/api/lists", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "remove", id }),
+    });
+    setItems((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  async function renameItem(id: string, text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setItems((prev) =>
+      prev.map((i) => (i.id === id ? { ...i, text: trimmed } : i)),
+    );
+    const res = await fetch("/api/lists", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update", id, text: trimmed }),
+    });
+    if (!res.ok) {
+      setMsg("Rename failed");
+      await load();
+    }
+  }
+
   function selectCard(id: string, columnItems: ListItem[], e: React.MouseEvent) {
     e.stopPropagation();
     const ids = columnItems.map((i) => i.id);
@@ -209,8 +251,7 @@ export default function TodoPage() {
           <div className="min-w-0">
             <h2 className="display text-xl leading-tight">.todo</h2>
             <p className="mt-0.5 text-xs text-[var(--muted)]">
-              New items land in Unassigned — drag between columns or onto a card
-              to reorder.
+              Double-click to edit · right-click to delete · drag to move.
               {selected.size > 0 && (
                 <>
                   {" "}
@@ -289,11 +330,28 @@ export default function TodoPage() {
               {col.items.map((item) => {
                 const isSel = selected.has(item.id);
                 const isDragging = dragIds.includes(item.id);
+                const isEditing = editId === item.id;
                 return (
                   <div
                     key={item.id}
-                    draggable
-                    onClick={(e) => selectCard(item.id, col.items, e)}
+                    draggable={!isEditing}
+                    onClick={(e) => {
+                      if (isEditing) return;
+                      selectCard(item.id, col.items, e);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setMenu(null);
+                      setEditId(item.id);
+                      setEditText(item.text);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSelected(new Set([item.id]));
+                      setLastSelected(item.id);
+                      setMenu({ id: item.id, x: e.clientX, y: e.clientY });
+                    }}
                     onDragOver={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -304,6 +362,10 @@ export default function TodoPage() {
                       setOverItemId((id) => (id === item.id ? null : id))
                     }
                     onDragStart={(e) => {
+                      if (isEditing) {
+                        e.preventDefault();
+                        return;
+                      }
                       const ids = idsToMove(item.id);
                       setDragIds(ids);
                       e.dataTransfer.setData(
@@ -333,11 +395,36 @@ export default function TodoPage() {
                     } ${isDragging ? "opacity-50" : ""}`}
                   >
                     <div className="flex items-start justify-between gap-1">
-                      <span className="leading-snug">
-                        {item.checked ? "✅ " : ""}
-                        {item.text}
-                      </span>
-                      {isSel && selected.size > 1 && (
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const t = editText.trim();
+                              if (t && t !== item.text) void renameItem(item.id, t);
+                              setEditId(null);
+                            } else if (e.key === "Escape") {
+                              setEditId(null);
+                            }
+                          }}
+                          onBlur={() => {
+                            const t = editText.trim();
+                            if (t && t !== item.text) void renameItem(item.id, t);
+                            setEditId(null);
+                          }}
+                          className="w-full rounded border border-[var(--accent)] bg-white px-1.5 py-0.5 text-xs sm:text-sm"
+                        />
+                      ) : (
+                        <span className="leading-snug">
+                          {item.checked ? "✅ " : ""}
+                          {item.text}
+                        </span>
+                      )}
+                      {isSel && selected.size > 1 && !isEditing && (
                         <span className="shrink-0 text-[10px] text-[var(--accent)]">
                           {selected.size}
                         </span>
@@ -355,6 +442,41 @@ export default function TodoPage() {
           </div>
         ))}
       </div>
+      {menu && (
+        <div
+          className="fixed z-50 min-w-[140px] rounded-lg border border-[var(--line)] bg-white py-1 shadow-lg"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="block w-full px-3 py-1.5 text-left text-sm hover:bg-[var(--accent-soft)]"
+            onClick={() => {
+              const card = items.find((x) => x.id === menu.id);
+              setEditId(menu.id);
+              setEditText(card?.text || "");
+              setMenu(null);
+            }}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="block w-full px-3 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
+            onClick={() => {
+              void deleteItem(menu.id);
+              setMenu(null);
+              setSelected((prev) => {
+                const next = new Set(prev);
+                next.delete(menu.id);
+                return next;
+              });
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 }
