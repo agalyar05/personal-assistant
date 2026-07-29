@@ -4,7 +4,7 @@ import { getReply, replyAsText } from "./assistant";
 import { formatDueSummary } from "./assignments";
 import {
   getIncomingTexts,
-  markThreadHandled,
+  markMessageHandled,
   saveGoogleVoiceReply,
   sendSms,
   sendUserReply,
@@ -106,12 +106,22 @@ export async function runPollCycle(opts?: {
   log(`Cron active (${gate.reason}) — polling...`);
   let replies = 0;
 
-  // 1) inbound texts
+  // 1) inbound texts — process every unanswered message (oldest first),
+  // not just one per GV thread.
   try {
     const incoming = await getIncomingTexts();
-    log(`Found ${incoming.length} thread(s) needing reply.`);
+    log(`Found ${incoming.length} message(s) needing reply.`);
     for (const text of incoming) {
       try {
+        if (await db.wasProcessed(text.id)) {
+          log(`Skip already processed ${text.id}`);
+          continue;
+        }
+        if (!text.body.trim()) {
+          await markMessageHandled(text.id);
+          await db.markProcessed(text.id, text.threadId);
+          continue;
+        }
         await saveGoogleVoiceReply(text.from);
         const reply = await getReply(text.body, []);
         await sendUserReply(
@@ -120,12 +130,12 @@ export async function runPollCycle(opts?: {
           reply,
           text.threadId,
         );
-        await markThreadHandled(text.threadId);
+        await markMessageHandled(text.id);
         await db.markProcessed(text.id, text.threadId);
         replies += 1;
-        log(`Replied to thread ${text.threadId}: ${replyAsText(reply).slice(0, 80)}`);
+        log(`Replied to message ${text.id}: ${replyAsText(reply).slice(0, 80)}`);
       } catch (e) {
-        log(`Error handling thread ${text.threadId}: ${e}`);
+        log(`Error handling message ${text.id}: ${e}`);
         try {
           await sendUserReply(
             text.from,
@@ -133,7 +143,8 @@ export async function runPollCycle(opts?: {
             "Sorry, I don't think I can do that.",
             text.threadId,
           );
-          await markThreadHandled(text.threadId);
+          await markMessageHandled(text.id);
+          await db.markProcessed(text.id, text.threadId);
         } catch {
           /* ignore */
         }

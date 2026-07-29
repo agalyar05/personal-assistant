@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as db from "@/lib/db";
 import { isClosedAssignmentStatus } from "@/lib/types";
+import { withinTaskHorizon } from "@/lib/fill";
 
 export async function GET() {
   const settings = await db.getSettings();
@@ -16,8 +17,14 @@ export async function GET() {
   for (const i of openLists) {
     byList[i.listName] = (byList[i.listName] || 0) + 1;
   }
+  const horizon = settings.taskHorizonDays ?? 7;
   const dueSoon = assignments
-    .filter((a) => !isClosedAssignmentStatus(a.status) && a.dueAt)
+    .filter(
+      (a) =>
+        !isClosedAssignmentStatus(a.status) &&
+        a.dueAt &&
+        withinTaskHorizon(a.dueAt, horizon),
+    )
     .sort(
       (a, b) =>
         new Date(a.dueAt!).getTime() - new Date(b.dueAt!).getTime(),
@@ -26,7 +33,6 @@ export async function GET() {
   const todos = listItems
     .filter((i) => i.listName === "todo" && !i.checked)
     .slice(0, 12);
-  // Don't ship every assignment to Home — only what widgets need
   const progressAssignments = assignments.map((a) => ({
     id: a.id,
     courseId: a.courseId,
@@ -41,6 +47,7 @@ export async function GET() {
       cronControl: settings.cronControl,
       dashboardLayout: settings.dashboardLayout,
       uiTheme: settings.uiTheme,
+      taskHorizonDays: settings.taskHorizonDays,
     },
     lists: byList,
     reminderCount: reminders.length,

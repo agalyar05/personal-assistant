@@ -137,7 +137,7 @@ async function collectThreadIds(
   return ids;
 }
 
-function findUnansweredInbound(
+function findUnansweredInbounds(
   messages: {
     id?: string | null;
     internalDate?: string | null;
@@ -154,29 +154,39 @@ function findUnansweredInbound(
   const sorted = [...messages].sort(
     (a, b) => Number(a.internalDate || 0) - Number(b.internalDate || 0),
   );
-  let lastInbound: (typeof sorted)[0] | null = null;
-  let lastInboundDate = 0;
+
   let lastSentDate = 0;
   for (const msg of sorted) {
     const date = Number(msg.internalDate || 0);
+    const headers = headerMap(msg.payload?.headers);
+    const from = headers.From || "";
+    const isSent =
+      (msg.labelIds || []).includes("SENT") ||
+      from.toLowerCase().includes(myEmail.toLowerCase());
+    if (isSent) lastSentDate = Math.max(lastSentDate, date);
+  }
+
+  // Every inbound after our last reply — not just the newest one.
+  // Multiple texts between cron runs share a GV thread and were getting dropped.
+  const unanswered: typeof sorted = [];
+  for (const msg of sorted) {
+    const date = Number(msg.internalDate || 0);
+    if (date <= lastSentDate) continue;
     const headers = headerMap(msg.payload?.headers);
     const body = decodeBody(msg.payload || {});
     const from = headers.From || "";
     const isSent =
       (msg.labelIds || []).includes("SENT") ||
       from.toLowerCase().includes(myEmail.toLowerCase());
-    if (isSent) {
-      lastSentDate = Math.max(lastSentDate, date);
-    } else if (
+    if (isSent) continue;
+    if (
       findGoogleVoiceReplyAddress(headers, body) ||
       isFromMyPhone(from)
     ) {
-      lastInbound = msg;
-      lastInboundDate = date;
+      unanswered.push(msg);
     }
   }
-  if (!lastInbound || lastInboundDate <= lastSentDate) return null;
-  return lastInbound;
+  return unanswered;
 }
 
 export async function getIncomingTexts(): Promise<InboundText[]> {
@@ -186,6 +196,7 @@ export async function getIncomingTexts(): Promise<InboundText[]> {
   const myEmail = profile.data.emailAddress || "";
   const threadIds = await collectThreadIds(service);
   const incoming: InboundText[] = [];
+  const seenMsg = new Set<string>();
 
   for (const threadId of threadIds) {
     const thread = await service.users.threads.get({
@@ -194,24 +205,28 @@ export async function getIncomingTexts(): Promise<InboundText[]> {
       format: "full",
     });
     const messages = thread.data.messages || [];
-    const inbound = findUnansweredInbound(messages, myEmail);
-    if (!inbound?.id || !inbound.payload) continue;
-    const headers = headerMap(inbound.payload.headers);
-    const rawBody = decodeBody(inbound.payload).trim();
-    const body = extractInboundSmsText(rawBody);
-    let replyAddress = findGoogleVoiceReplyAddress(headers, rawBody);
-    if (!replyAddress && isFromMyPhone(headers.From || "")) {
-      replyAddress = normalizeEmailAddress(headers.From || "");
+    const inbounds = findUnansweredInbounds(messages, myEmail);
+    for (const inbound of inbounds) {
+      if (!inbound?.id || !inbound.payload) continue;
+      if (seenMsg.has(inbound.id)) continue;
+      seenMsg.add(inbound.id);
+      const headers = headerMap(inbound.payload.headers);
+      const rawBody = decodeBody(inbound.payload).trim();
+      const body = extractInboundSmsText(rawBody);
+      let replyAddress = findGoogleVoiceReplyAddress(headers, rawBody);
+      if (!replyAddress && isFromMyPhone(headers.From || "")) {
+        replyAddress = normalizeEmailAddress(headers.From || "");
+      }
+      if (!replyAddress) continue;
+      incoming.push({
+        id: inbound.id,
+        threadId,
+        from: replyAddress,
+        subject: headers.Subject || "",
+        body,
+        internalDate: Number(inbound.internalDate || 0),
+      });
     }
-    if (!replyAddress) continue;
-    incoming.push({
-      id: inbound.id,
-      threadId,
-      from: replyAddress,
-      subject: headers.Subject || "",
-      body,
-      internalDate: Number(inbound.internalDate || 0),
-    });
   }
   incoming.sort((a, b) => a.internalDate - b.internalDate);
   return incoming;
@@ -352,6 +367,28 @@ export async function sendUserReply(
     return;
   }
   await sendTextReply(toAddress, subject, reply, threadId);
+}
+
+export async function markMessageHandled(messageId: string): Promise<void> {
+  const service = gmail();
+  const labelName = "assistant-handled";
+  const labels = await service.users.labels.list({ userId: "me" });
+  let labelId = labels.data.labels?.find((l) => l.name === labelName)?.id;
+  if (!labelId) {
+    const created = await service.users.labels.create({
+      userId: "me",
+      requestBody: { name: labelName },
+    });
+    labelId = created.data.id || undefined;
+  }
+  await service.users.messages.modify({
+    userId: "me",
+    id: messageId,
+    requestBody: {
+      removeLabelIds: ["UNREAD"],
+      addLabelIds: labelId ? [labelId] : [],
+    },
+  });
 }
 
 export async function markThreadHandled(threadId: string): Promise<void> {

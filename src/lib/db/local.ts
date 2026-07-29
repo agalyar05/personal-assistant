@@ -14,6 +14,11 @@ import {
   type Reminder,
   type Store,
 } from "../types";
+import {
+  APPLICATIONS_GROUP_CODE,
+  DEFAULT_APPLICATIONS_GROUP,
+  isApplicationsGroup,
+} from "../courses";
 
 const DATA_PATH = path.join(process.cwd(), "data", "store.json");
 
@@ -48,6 +53,9 @@ async function readStore(): Promise<Store> {
             ? parsed.settings.dashboardLayout
             : DEFAULT_STORE.settings.dashboardLayout,
         thinkingSheet: parsed.settings?.thinkingSheet || DEFAULT_STORE.settings.thinkingSheet,
+        taskHorizonDays:
+          parsed.settings?.taskHorizonDays ??
+          DEFAULT_STORE.settings.taskHorizonDays,
       },
       listItems: (parsed.listItems || []).map((i) => ({
         ...i,
@@ -366,6 +374,15 @@ export async function getFullStore(): Promise<Store> {
 
 export async function getCourses(): Promise<Course[]> {
   const store = await readStore();
+  if (!store.courses.some(isApplicationsGroup)) {
+    store.courses.push({
+      id: uid(),
+      ...DEFAULT_APPLICATIONS_GROUP,
+      code: APPLICATIONS_GROUP_CODE,
+      createdAt: new Date().toISOString(),
+    });
+    await writeStore(store);
+  }
   return [...store.courses].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
@@ -401,6 +418,10 @@ export async function upsertCourse(
 
 export async function deleteCourse(id: string): Promise<void> {
   const store = await readStore();
+  const target = store.courses.find((c) => c.id === id);
+  if (target && isApplicationsGroup(target)) {
+    throw new Error("Cannot delete the Applications group");
+  }
   store.courses = store.courses.filter((c) => c.id !== id);
   for (const a of store.assignments) {
     if (a.courseId === id) a.courseId = null;

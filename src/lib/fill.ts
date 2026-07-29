@@ -157,3 +157,24 @@ export function formatDueDate(
     ...opts,
   });
 }
+
+/**
+ * Whether a task should appear in horizon-limited views.
+ * - horizonDays <= 0 → show all
+ * - no due date → always show
+ * - overdue or due within horizonDays from today → show
+ */
+export function withinTaskHorizon(
+  dueAt: string | null,
+  horizonDays: number,
+  now = new Date(),
+): boolean {
+  if (!horizonDays || horizonDays <= 0) return true;
+  if (!dueAt) return true;
+  const p = dueDateParts(dueAt);
+  if (!p) return true;
+  const due = new Date(p.year, p.month, p.day, 12, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  end.setDate(end.getDate() + horizonDays);
+  return due.getTime() <= end.getTime();
+}

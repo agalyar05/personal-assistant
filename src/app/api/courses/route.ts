@@ -38,8 +38,15 @@ export async function POST(req: Request) {
     action?: "delete";
   };
   if (body.action === "delete" && body.id) {
-    await db.deleteCourse(body.id);
-    return NextResponse.json({ ok: true });
+    try {
+      await db.deleteCourse(body.id);
+      return NextResponse.json({ ok: true });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Delete failed" },
+        { status: 400 },
+      );
+    }
   }
   if (!body.name?.trim()) {
     return NextResponse.json({ error: "name required" }, { status: 400 });

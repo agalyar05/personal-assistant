@@ -11,6 +11,7 @@ type Settings = {
   morningBriefingTime: string;
   weeklyBriefingDay: string;
   weeklyBriefingTime: string;
+  taskHorizonDays: number;
   uiTheme: UiThemeSettings;
   cronControl: {
     mode: "off" | "always" | "window";
@@ -37,6 +38,7 @@ export default function SettingsPage() {
         custom: { ...DEFAULT_THEME_CUSTOM },
       },
       weatherCity: json.settings?.weatherCity || "Detroit",
+      taskHorizonDays: Number(json.settings?.taskHorizonDays ?? 7),
     });
   }
 
@@ -55,6 +57,9 @@ export default function SettingsPage() {
       ...json.settings,
       uiTheme: json.settings?.uiTheme || theme,
       weatherCity: json.settings?.weatherCity || "Detroit",
+      taskHorizonDays: Number(
+        json.settings?.taskHorizonDays ?? settings?.taskHorizonDays ?? 7,
+      ),
     });
     setSaved("Saved");
     setTimeout(() => setSaved(""), 2000);
@@ -121,6 +126,27 @@ export default function SettingsPage() {
               }
             />
           </label>
+          <label className="text-sm sm:col-span-2">
+            Task horizon (days)
+            <input
+              type="number"
+              min={0}
+              max={365}
+              className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2"
+              value={settings.taskHorizonDays}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  taskHorizonDays: Math.max(0, Number(e.target.value) || 0),
+                })
+              }
+            />
+            <span className="mt-1 block text-xs text-[var(--muted)]">
+              Masterlist sheet / agenda / kanban only show tasks due within this
+              many days (plus overdue &amp; undated). Calendar always shows
+              everything. Use 0 for all tasks.
+            </span>
+          </label>
         </div>
         <button
           type="button"
@@ -130,6 +156,7 @@ export default function SettingsPage() {
               timezone: settings.timezone,
               weatherCity: settings.weatherCity,
               morningBriefingTime: settings.morningBriefingTime,
+              taskHorizonDays: settings.taskHorizonDays,
               cronControl: { ...cc, timezone: settings.timezone },
             })
           }

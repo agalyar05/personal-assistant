@@ -75,6 +75,8 @@ export type AppSettings = {
   listCatalog: string[];
   dashboardLayout: DashboardLayout;
   thinkingSheet: ThinkingSheetData;
+  /** Show tasks due within this many days (overdue + undated always). 0 = all. Calendar ignores this. */
+  taskHorizonDays: number;
 };
 
 export type AssignmentStatus =
@@ -248,6 +250,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     rowCount: 30,
     cells: {},
   },
+  taskHorizonDays: 7,
 };
 
 export const DEFAULT_STORE: Store = {

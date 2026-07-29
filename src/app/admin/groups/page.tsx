@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Course, CourseLink } from "@/lib/types";
+import { isApplicationsGroup } from "@/lib/courses";
 import { classColorsForTheme } from "@/lib/themes";
 import { useUiTheme } from "@/components/ThemePicker";
 
@@ -96,6 +97,11 @@ export default function GroupsPage() {
   }
 
   async function remove(id: string) {
+    const target = courses.find((c) => c.id === id);
+    if (target && isApplicationsGroup(target)) {
+      setMsg("Applications is a built-in group — change its color instead of deleting.");
+      return;
+    }
     if (!confirm("Delete this class? Masterlist items will become unassigned.")) {
       return;
     }
@@ -140,7 +146,8 @@ export default function GroupsPage() {
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
         <h2 className="display text-2xl">Groups</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Classes and color chips used across Masterlist. Add Canvas / syllabus
+          Classes and color chips used across Masterlist. Applications is a
+          built-in group for scholarship deadlines — pick its color here.
           links under each class. Palette suggestions follow your theme.
         </p>
         {msg && <p className="mt-3 text-sm text-[var(--accent)]">{msg}</p>}
@@ -286,10 +293,17 @@ export default function GroupsPage() {
                   <div className="min-w-0">
                     <div className="font-medium">
                       {c.code ? `${c.code} — ${c.name}` : c.name}
+                      {isApplicationsGroup(c) && (
+                        <span className="ml-2 text-[10px] font-normal uppercase tracking-wide text-[var(--muted)]">
+                          built-in
+                        </span>
+                      )}
                     </div>
                     <div className="text-sm text-[var(--muted)]">
-                      {[c.professor, c.schedule].filter(Boolean).join(" · ") ||
-                        "No details yet"}
+                      {isApplicationsGroup(c)
+                        ? "Color for scholarship / job deadlines on Masterlist calendar & agenda"
+                        : [c.professor, c.schedule].filter(Boolean).join(" · ") ||
+                          "No details yet"}
                     </div>
                     {editingLinksId !== c.id && (c.links?.length ?? 0) > 0 && (
                       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
@@ -404,13 +418,15 @@ export default function GroupsPage() {
                     />
                   ))}
                 </div>
-                <button
-                  type="button"
-                  className="text-sm text-red-700"
-                  onClick={() => void remove(c.id)}
-                >
-                  Delete
-                </button>
+                {!isApplicationsGroup(c) && (
+                  <button
+                    type="button"
+                    className="text-sm text-red-700"
+                    onClick={() => void remove(c.id)}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           </div>

@@ -16,7 +16,7 @@ import {
 } from "@/lib/types";
 import { AssignmentSheet } from "@/components/AssignmentSheet";
 import { CelebrationBurst } from "@/components/CelebrationBurst";
-import { dueDateParts, formatDueDate } from "@/lib/fill";
+import { dueDateParts, formatDueDate, withinTaskHorizon } from "@/lib/fill";
 import {
   kanbanBoardClass,
   kanbanBoardStyle,
@@ -25,6 +25,7 @@ import {
 } from "@/lib/kanban-layout";
 import { normalizeApplicationUrl } from "@/lib/applications";
 import { APPLICATION_STATUS_LABELS } from "@/lib/application-meta";
+import { isApplicationsGroup } from "@/lib/courses";
 
 type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
@@ -71,6 +72,7 @@ export default function AssignmentsPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [taskHorizonDays, setTaskHorizonDays] = useState(7);
   const [msg, setMsg] = useState("");
   const [celebrate, setCelebrate] = useState(false);
   const [month, setMonth] = useState(() => {
@@ -82,9 +84,10 @@ export default function AssignmentsPage() {
   const [weekStartsOn, setWeekStartsOn] = useState<WeekStart>(0);
 
   const load = useCallback(async () => {
-    const [aRes, appRes] = await Promise.all([
+    const [aRes, appRes, sRes] = await Promise.all([
       fetch("/api/assignments"),
       fetch("/api/applications"),
+      fetch("/api/settings"),
     ]);
     const json = await aRes.json();
     setAssignments(
@@ -97,6 +100,10 @@ export default function AssignmentsPage() {
     if (appRes.ok) {
       const appJson = await appRes.json();
       setApplications(appJson.applications || []);
+    }
+    if (sRes.ok) {
+      const sJson = await sRes.json();
+      setTaskHorizonDays(Number(sJson.settings?.taskHorizonDays ?? 7));
     }
   }, []);
 
@@ -132,6 +139,26 @@ export default function AssignmentsPage() {
   const openApps = useMemo(
     () => applications.filter((a) => !APP_CLOSED.has(a.status)),
     [applications],
+  );
+
+  const applicationsGroup = useMemo(
+    () => courses.find(isApplicationsGroup) || null,
+    [courses],
+  );
+
+  /** Sheet / agenda / kanban — calendar uses full `assignments`. */
+  const horizonAssignments = useMemo(
+    () =>
+      assignments.filter((a) => withinTaskHorizon(a.dueAt, taskHorizonDays)),
+    [assignments, taskHorizonDays],
+  );
+
+  const horizonApps = useMemo(
+    () =>
+      openApps.filter(
+        (a) => !a.deadline || withinTaskHorizon(a.deadline, taskHorizonDays),
+      ),
+    [openApps, taskHorizonDays],
   );
 
   async function patchAssignment(patch: Partial<Assignment> & { id: string }) {
@@ -176,6 +203,54 @@ export default function AssignmentsPage() {
     }
     setMsg("Row added");
     await load();
+  }
+
+  async function insertRowAt(index: number, where: "above" | "below") {
+    const ordered = [...assignments].sort(
+      (a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
+    );
+    const visible = ordered.filter((a) =>
+      withinTaskHorizon(a.dueAt, taskHorizonDays),
+    );
+    const anchor = visible[index];
+    let insertAt = ordered.length;
+    if (anchor) {
+      const fullIdx = ordered.findIndex((a) => a.id === anchor.id);
+      insertAt = where === "above" ? fullIdx : fullIdx + 1;
+    }
+    insertAt = Math.max(0, Math.min(ordered.length, insertAt));
+
+    const res = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "New assignment",
+        status: "not_started",
+        difficulty: "medium",
+        assignmentType: "Homework",
+        link: "",
+        sortOrder: insertAt + 1,
+      }),
+    });
+    if (!res.ok) {
+      setMsg("Could not insert row");
+      return;
+    }
+    const created = (await res.json()).assignment as Assignment | undefined;
+    if (!created?.id) {
+      await load();
+      return;
+    }
+    const next = [...ordered];
+    next.splice(insertAt, 0, created);
+    await bulkSave(
+      next.map((row, i) => ({
+        id: row.id,
+        title: row.title,
+        sortOrder: i + 1,
+      })),
+    );
+    setMsg(where === "above" ? "Row inserted above" : "Row inserted below");
   }
 
   async function addInKanbanColumn(columnId: string) {
@@ -268,6 +343,12 @@ export default function AssignmentsPage() {
               </a>{" "}
               show on Calendar & Agenda
               {openApps.length ? ` (${openApps.length} open)` : ""}.
+              {taskHorizonDays > 0
+                ? ` Showing ${taskHorizonDays}d horizon (calendar = all).`
+                : " Showing all tasks."}{" "}
+              <a href="/admin/settings" className="text-[var(--accent)] underline">
+                Settings
+              </a>
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -309,7 +390,7 @@ export default function AssignmentsPage() {
 
       {view === "sheet" && (
         <AssignmentSheet
-          assignments={assignments}
+          assignments={horizonAssignments}
           courses={courses}
           onChangeLocal={(id, patch) =>
             setAssignments((prev) =>
@@ -318,6 +399,7 @@ export default function AssignmentsPage() {
           }
           onPatch={patchAssignment}
           onAddRow={addBlankRow}
+          onInsertRow={insertRowAt}
           onDelete={removeRow}
           onBulk={bulkSave}
           onMsg={setMsg}
@@ -326,8 +408,9 @@ export default function AssignmentsPage() {
 
       {view === "agenda" && (
         <AgendaView
-          assignments={assignments}
-          applications={openApps}
+          assignments={horizonAssignments}
+          applications={horizonApps}
+          applicationsColor={applicationsGroup?.color || "#a16207"}
           courseMap={courseMap}
           onStatus={(id, status) => void patchAssignment({ id, status })}
         />
@@ -360,6 +443,7 @@ export default function AssignmentsPage() {
           }}
           assignments={assignments}
           applications={openApps}
+          applicationsColor={applicationsGroup?.color || "#a16207"}
           courseMap={courseMap}
           onMoveDay={(ids, dueAt) => {
             void (async () => {
@@ -377,7 +461,7 @@ export default function AssignmentsPage() {
 
       {view === "kanban" && (
         <KanbanView
-          assignments={assignments}
+          assignments={horizonAssignments}
           courses={courses}
           kanbanBy={kanbanBy}
           setKanbanBy={setKanbanBy}
@@ -408,11 +492,13 @@ export default function AssignmentsPage() {
 function AgendaView({
   assignments,
   applications,
+  applicationsColor,
   courseMap,
   onStatus,
 }: {
   assignments: Assignment[];
   applications: Application[];
+  applicationsColor: string;
   courseMap: Map<string, Course>;
   onStatus: (id: string, status: AssignmentStatus) => void;
 }) {
@@ -453,11 +539,17 @@ function AgendaView({
             return (
               <li
                 key={`app-${app.id}`}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-[var(--accent)]/40 bg-[var(--accent-soft)]/40 px-3 py-2"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white/70 px-3 py-2"
               >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--accent)]">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ background: applicationsColor }}
+                    />
+                    <span className="rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white"
+                      style={{ background: applicationsColor }}
+                    >
                       {app.kind}
                     </span>
                     <span className="font-medium">
@@ -671,6 +763,7 @@ function CalendarView({
   setWeekStartsOn,
   assignments,
   applications,
+  applicationsColor,
   courseMap,
   onMoveDay,
 }: {
@@ -684,6 +777,7 @@ function CalendarView({
   setWeekStartsOn: (v: WeekStart) => void;
   assignments: Assignment[];
   applications: Application[];
+  applicationsColor: string;
   courseMap: Map<string, Course>;
   onMoveDay: (ids: string[], dueAt: string) => void;
 }) {
@@ -910,7 +1004,8 @@ function CalendarView({
             <a
               key={app.id}
               href="/admin/applications"
-              className="block truncate rounded border border-dashed border-[var(--accent)] bg-white/90 px-1.5 py-1 text-[11px] text-[var(--accent)] no-underline hover:bg-[var(--accent-soft)]"
+              className="block truncate rounded px-1.5 py-1 text-[11px] text-white no-underline opacity-95 hover:opacity-100"
+              style={{ background: applicationsColor }}
               title={`${app.kind}: ${app.title}`}
               onClick={(e) => e.stopPropagation()}
             >
@@ -990,7 +1085,8 @@ function CalendarView({
         </div>
       </div>
       <p className="mb-3 text-center text-xs text-[var(--muted)]">
-        Assignments drag to reschedule · dashed chips are scholarship deadlines
+        Assignments drag to reschedule · Applications use the Applications group
+        color (edit in Groups)
         {selected.size > 0 && (
           <>
             {" · "}

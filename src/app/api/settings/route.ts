@@ -57,6 +57,7 @@ export async function PUT(req: Request) {
     cronControl?: Partial<CronControlSettings>;
     uiTheme?: UiThemeSettings;
     dashboardLayout?: DashboardLayout;
+    taskHorizonDays?: number;
     liveHours?: number;
     endLive?: boolean;
   };
@@ -96,15 +97,22 @@ export async function PUT(req: Request) {
   else patch.uiTheme = current.uiTheme;
   if (body.dashboardLayout !== undefined) patch.dashboardLayout = dashboardLayout;
   else patch.dashboardLayout = current.dashboardLayout;
+  if (body.taskHorizonDays !== undefined) {
+    patch.taskHorizonDays = Math.max(0, Math.min(365, Number(body.taskHorizonDays) || 0));
+  } else {
+    patch.taskHorizonDays = current.taskHorizonDays;
+  }
 
   const settings = await db.updateSettings(patch);
-  // Don't echo giant payloads back — client already has the state
   return NextResponse.json({
     ok: true,
     settings: {
       timezone: settings.timezone,
+      weatherCity: settings.weatherCity,
+      morningBriefingTime: settings.morningBriefingTime,
       uiTheme: settings.uiTheme,
       cronControl: settings.cronControl,
+      taskHorizonDays: settings.taskHorizonDays,
     },
   });
 }

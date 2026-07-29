@@ -14,6 +14,11 @@ import type {
   Store,
 } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
+import {
+  APPLICATIONS_GROUP_CODE,
+  DEFAULT_APPLICATIONS_GROUP,
+  isApplicationsGroup,
+} from "../courses";
 import * as local from "./local";
 
 function hasSupabase(): boolean {
@@ -77,6 +82,10 @@ export async function getSettings(): Promise<AppSettings> {
       ),
       cells: (payload.thinkingSheet?.cells || {}) as Record<string, string>,
     },
+    taskHorizonDays: Math.max(
+      0,
+      Math.min(365, Number(payload.taskHorizonDays ?? DEFAULT_SETTINGS.taskHorizonDays)),
+    ),
   };
 }
 
@@ -478,7 +487,18 @@ export async function getCourses(): Promise<Course[]> {
   if (!hasSupabase()) return local.getCourses();
   const sb = client();
   const { data } = await sb.from("courses").select("*").order("sort_order");
-  return (data || []).map((r) => rowToCourse(r as Record<string, unknown>));
+  let courses = (data || []).map((r) => rowToCourse(r as Record<string, unknown>));
+  courses = await ensureApplicationsGroupAmong(courses);
+  return courses;
+}
+
+async function ensureApplicationsGroupAmong(courses: Course[]): Promise<Course[]> {
+  if (courses.some(isApplicationsGroup)) return courses;
+  const created = await upsertCourse({
+    ...DEFAULT_APPLICATIONS_GROUP,
+    code: APPLICATIONS_GROUP_CODE,
+  });
+  return [...courses, created].sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 export async function upsertCourse(
@@ -524,6 +544,13 @@ export async function upsertCourse(
 
 export async function deleteCourse(id: string): Promise<void> {
   if (!hasSupabase()) return local.deleteCourse(id);
+  const courses = await getCourses();
+  const target = courses.find((c) => c.id === id);
+  if (target) {
+    if (isApplicationsGroup(target)) {
+      throw new Error("Cannot delete the Applications group");
+    }
+  }
   const sb = client();
   await sb.from("assignments").update({ course_id: null }).eq("course_id", id);
   await sb.from("courses").delete().eq("id", id);

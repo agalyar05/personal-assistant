@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import {
@@ -89,6 +90,7 @@ export function AssignmentSheet({
   onChangeLocal,
   onPatch,
   onAddRow,
+  onInsertRow,
   onDelete,
   onBulk,
   onMsg,
@@ -98,6 +100,10 @@ export function AssignmentSheet({
   onChangeLocal: (id: string, patch: Partial<Assignment>) => void;
   onPatch: (patch: Partial<Assignment> & { id: string }) => Promise<void>;
   onAddRow: () => Promise<void>;
+  onInsertRow: (
+    index: number,
+    where: "above" | "below",
+  ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onBulk: (
     rows: (Partial<Assignment> & { title?: string; id?: string })[],
@@ -110,9 +116,15 @@ export function AssignmentSheet({
   const [anchor, setAnchor] = useState<CellPos | null>(null);
   const [editing, setEditing] = useState(false);
   const [fillMode, setFillMode] = useState<FillMode>("weekly");
+  const [fillCount, setFillCount] = useState(5);
   const [fillDragging, setFillDragging] = useState(false);
   const [rangeDragging, setRangeDragging] = useState(false);
   const [dragRowIdx, setDragRowIdx] = useState<number | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    row: number;
+  } | null>(null);
   const fillStartRef = useRef<CellPos | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement | HTMLSelectElement>>(
@@ -605,8 +617,27 @@ export function AssignmentSheet({
     return () => window.removeEventListener("mouseup", up);
   }, [fillDragging, rangeDragging]);
 
+  useEffect(() => {
+    if (!ctxMenu) return;
+    function close() {
+      setCtxMenu(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setCtxMenu(null);
+    }
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
   async function reorderRows(fromIdx: number, toIdx: number) {
     if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
+    if (toIdx >= rows.length) return;
     const next = [...rows];
     const [moved] = next.splice(fromIdx, 1);
     if (!moved) return;
@@ -616,12 +647,49 @@ export function AssignmentSheet({
       title: row.title,
       sortOrder: i + 1,
     }));
-    // Optimistic local order via sortOrder patches
     for (const p of patchRows) {
       onChangeLocal(p.id, { sortOrder: p.sortOrder });
     }
     await onBulk(patchRows);
     onMsg("Rows reordered");
+  }
+
+  function selectedRowIndexes(): number[] {
+    if (!selection) {
+      return ctxMenu ? [ctxMenu.row] : active ? [active.row] : [];
+    }
+    const out: number[] = [];
+    for (let r = selection.r0; r <= selection.r1; r++) out.push(r);
+    return out;
+  }
+
+  async function deleteSelectedRows() {
+    const idxs = selectedRowIndexes();
+    const ids = idxs.map((i) => rows[i]?.id).filter(Boolean) as string[];
+    if (!ids.length) return;
+    if (
+      !confirm(
+        ids.length === 1
+          ? "Delete this row?"
+          : `Delete ${ids.length} rows?`,
+      )
+    ) {
+      return;
+    }
+    for (const id of ids) await onDelete(id);
+    onMsg(ids.length === 1 ? "Row deleted" : `${ids.length} rows deleted`);
+    setActive(null);
+    setAnchor(null);
+  }
+
+  function openRowMenu(e: ReactMouseEvent, rowIdx: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selection || rowIdx < selection.r0 || rowIdx > selection.r1) {
+      selectCell({ row: rowIdx, col: active?.col ?? 0 });
+    }
+    setEditing(false);
+    setCtxMenu({ x: e.clientX, y: e.clientY, row: rowIdx });
   }
 
   function onHeaderDrop(target: ColKey) {
@@ -831,16 +899,28 @@ export function AssignmentSheet({
             <option value="auto">auto</option>
           </select>
         </label>
+        <label className="text-xs text-[var(--muted)]">
+          Rows
+          <input
+            type="number"
+            min={1}
+            max={50}
+            className="ml-1 w-14 rounded-md border border-[var(--line)] bg-white px-2 py-1"
+            value={fillCount}
+            onChange={(e) =>
+              setFillCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
+            }
+          />
+        </label>
         <button
           type="button"
-          onClick={() => void fillDownFromActive(5)}
+          onClick={() => void fillDownFromActive(fillCount)}
           className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
         >
           Fill down
         </button>
         <span className="hidden text-xs text-[var(--muted)] lg:inline">
-          Drag to select · Shift+click · drag # to reorder rows · Enter/F2 edit ·
-          ⌘/Ctrl+C/V
+          Right-click rows · drag # to move · Shift+click · Enter/F2 · ⌘/Ctrl+C/V
         </span>
       </div>
 
@@ -848,6 +928,12 @@ export function AssignmentSheet({
         ref={sheetRef}
         tabIndex={0}
         onKeyDown={onSheetKeyDown}
+        onContextMenu={(e) => {
+          // allow browser menu only outside table body handling
+          if ((e.target as HTMLElement).closest("tbody")) {
+            /* handled per-row */
+          }
+        }}
         className="max-h-[min(75vh,900px)] overflow-auto outline-none focus:ring-1 focus:ring-[var(--accent)]/40"
       >
         <table className="min-w-[1200px] w-full border-collapse text-sm select-none">
@@ -879,6 +965,7 @@ export function AssignmentSheet({
             {rows.map((a, rowIdx) => (
               <tr
                 key={a.id}
+                onContextMenu={(e) => openRowMenu(e, rowIdx)}
                 onDragOver={(e) => {
                   if (dragRowIdx == null) return;
                   e.preventDefault();
@@ -907,7 +994,7 @@ export function AssignmentSheet({
                   }}
                   onDragEnd={() => setDragRowIdx(null)}
                   className="sticky left-0 z-10 cursor-grab border-b border-r border-[var(--line)] bg-[var(--card)] px-1 py-0 text-center font-mono text-[10px] text-[var(--muted)] active:cursor-grabbing"
-                  title="Drag to reorder row"
+                  title="Drag to reorder · right-click for menu"
                 >
                   {rowIdx + 1}
                 </td>
@@ -1014,6 +1101,87 @@ export function AssignmentSheet({
           </p>
         )}
       </div>
+
+      {ctxMenu && (
+        <div
+          className="fixed z-50 min-w-[11rem] overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--card)] py-1 text-sm shadow-lg"
+          style={{
+            left: Math.min(ctxMenu.x, window.innerWidth - 200),
+            top: Math.min(ctxMenu.y, window.innerHeight - 280),
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {(
+            [
+              {
+                label: "Insert row above",
+                run: () => void onInsertRow(ctxMenu.row, "above"),
+              },
+              {
+                label: "Insert row below",
+                run: () => void onInsertRow(ctxMenu.row, "below"),
+              },
+              {
+                label: "Add row at bottom",
+                run: () => void onAddRow(),
+              },
+              { type: "sep" as const },
+              {
+                label: "Move row up",
+                disabled: ctxMenu.row <= 0,
+                run: () => void reorderRows(ctxMenu.row, ctxMenu.row - 1),
+              },
+              {
+                label: "Move row down",
+                disabled: ctxMenu.row >= rows.length - 1,
+                run: () => void reorderRows(ctxMenu.row, ctxMenu.row + 1),
+              },
+              { type: "sep" as const },
+              {
+                label:
+                  selectedRowIndexes().length > 1
+                    ? `Delete ${selectedRowIndexes().length} rows`
+                    : "Delete row",
+                danger: true,
+                run: () => void deleteSelectedRows(),
+              },
+            ] as (
+              | { type: "sep" }
+              | {
+                  label: string;
+                  run: () => void;
+                  disabled?: boolean;
+                  danger?: boolean;
+                }
+            )[]
+          ).map((item, i) =>
+            "type" in item && item.type === "sep" ? (
+              <div
+                key={`sep-${i}`}
+                className="my-1 border-t border-[var(--line)]"
+              />
+            ) : (
+              <button
+                key={"label" in item ? item.label : i}
+                type="button"
+                disabled={"disabled" in item && item.disabled}
+                className={`flex w-full px-3 py-1.5 text-left disabled:opacity-40 ${
+                  "danger" in item && item.danger
+                    ? "text-red-700 hover:bg-red-50"
+                    : "text-[var(--ink)] hover:bg-[var(--accent-soft)]"
+                }`}
+                onClick={() => {
+                  if ("run" in item) item.run();
+                  setCtxMenu(null);
+                }}
+              >
+                {"label" in item ? item.label : null}
+              </button>
+            ),
+          )}
+        </div>
+      )}
     </section>
   );
 }
