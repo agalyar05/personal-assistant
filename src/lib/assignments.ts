@@ -37,6 +37,7 @@ export async function formatDueSummary(
 ): Promise<string> {
   const assignments = await db.getAssignments();
   const courses = await db.getCourses();
+  const applications = await db.getApplications();
   const byId = new Map(courses.map((c) => [c.id, c]));
 
   const todayYmd = ymdInTimezone(new Date(), timezone);
@@ -49,6 +50,7 @@ export async function formatDueSummary(
     endStr = addDaysYmd(todayYmd, 7);
   }
 
+  const closedApp = new Set(["accepted", "rejected", "withdrawn"]);
   const items = assignments
     .filter((a) => {
       if (!a.dueAt || isClosedAssignmentStatus(a.status)) return false;
@@ -58,18 +60,31 @@ export async function formatDueSummary(
     })
     .sort((a, b) => String(a.dueAt).localeCompare(String(b.dueAt)));
 
-  if (!items.length) {
+  const appItems = applications
+    .filter((a) => {
+      if (!a.deadline || closedApp.has(a.status)) return false;
+      return a.deadline >= startStr && a.deadline < endStr;
+    })
+    .sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)));
+
+  if (!items.length && !appItems.length) {
     return which === "week"
       ? "Nothing due in the next 7 days."
       : `Nothing due ${which}.`;
   }
 
-  const lines = items.map((a, i) => {
+  const lines: string[] = [];
+  for (const a of items) {
     const course = a.courseId ? byId.get(a.courseId) : null;
     const when = formatDueDate(a.dueAt) || "?";
     const cls = course?.code || course?.name || "General";
-    return `${i + 1}. ${cls}: ${a.title} — ${when}`;
-  });
+    lines.push(`${lines.length + 1}. ${cls}: ${a.title} - ${when}`);
+  }
+  for (const a of appItems) {
+    lines.push(
+      `${lines.length + 1}. App (${a.kind}): ${a.title} - ${a.deadline}`,
+    );
+  }
   const header =
     which === "today"
       ? "Due today:"

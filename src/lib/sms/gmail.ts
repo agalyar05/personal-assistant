@@ -351,6 +351,19 @@ export async function sendSms(body: string, _subject = "Message"): Promise<void>
   await sendTextReply(to, "", body);
 }
 
+/** Send several SMS bodies with a short delay (GV is flaky with long multi-line texts). */
+export async function sendSmsParts(parts: string[]): Promise<void> {
+  const cleaned = parts.map((p) => p.trim()).filter(Boolean);
+  for (let i = 0; i < cleaned.length; i++) {
+    await sendSms(cleaned[i]!);
+    if (i < cleaned.length - 1) {
+      await new Promise((r) =>
+        setTimeout(r, Number(process.env.GV_SEND_DELAY_MS || 1500)),
+      );
+    }
+  }
+}
+
 export async function sendUserReply(
   toAddress: string,
   subject: string,

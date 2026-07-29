@@ -29,37 +29,50 @@ async function coords(city: string): Promise<[number, number]> {
 }
 
 export async function formatWeatherText(daysAhead = 0): Promise<string> {
-  const settings = await db.getSettings();
-  const city =
-    settings.weatherCity?.trim() ||
-    process.env.WEATHER_CITY?.trim() ||
-    "Detroit";
-  const tz =
-    settings.timezone?.trim() ||
-    process.env.TIMEZONE?.trim() ||
-    "America/Detroit";
-  const [lat, lon] = await coords(city);
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
-    `&timezone=${encodeURIComponent(tz)}&forecast_days=3`;
-  const res = await fetch(url);
-  const data = (await res.json()) as {
-    daily: {
-      weathercode: number[];
-      temperature_2m_max: number[];
-      temperature_2m_min: number[];
-      precipitation_probability_max: number[];
+  try {
+    const settings = await db.getSettings();
+    const city =
+      settings.weatherCity?.trim() ||
+      process.env.WEATHER_CITY?.trim() ||
+      "Detroit";
+    const tz =
+      settings.timezone?.trim() ||
+      process.env.TIMEZONE?.trim() ||
+      "America/Detroit";
+    const [lat, lon] = await coords(city);
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
+      `&timezone=${encodeURIComponent(tz)}&forecast_days=3`;
+    const res = await fetch(url);
+    if (!res.ok) return "Weather unavailable right now.";
+    const data = (await res.json()) as {
+      daily?: {
+        weathercode: number[];
+        temperature_2m_max: number[];
+        temperature_2m_min: number[];
+        precipitation_probability_max: number[];
+      };
     };
-  };
-  const i = Math.min(Math.max(daysAhead, 0), 2);
-  const code = data.daily.weathercode[i] ?? 0;
-  const hi = Math.round(data.daily.temperature_2m_max[i] ?? 0);
-  const lo = Math.round(data.daily.temperature_2m_min[i] ?? 0);
-  const pop = data.daily.precipitation_probability_max[i] ?? 0;
-  const label = daysAhead === 0 ? "Today" : daysAhead === 1 ? "Tomorrow" : `Day +${daysAhead}`;
-  const conditions = WMO[code] || "mixed conditions";
-  const umbrella = RAIN.has(code) || pop >= 50;
-  const emoji = umbrella ? "☔" : "☀️";
-  return `${emoji} ${label} in ${city}: ${conditions}, ${hi}°/${lo}°F${umbrella ? " — grab an umbrella" : ""}`;
+    if (!data.daily?.weathercode?.length) {
+      return "Weather unavailable right now.";
+    }
+    const i = Math.min(Math.max(daysAhead, 0), 2);
+    const code = data.daily.weathercode[i] ?? 0;
+    const hi = Math.round(data.daily.temperature_2m_max[i] ?? 0);
+    const lo = Math.round(data.daily.temperature_2m_min[i] ?? 0);
+    const pop = data.daily.precipitation_probability_max[i] ?? 0;
+    const label =
+      daysAhead === 0 ? "Today" : daysAhead === 1 ? "Tomorrow" : `Day +${daysAhead}`;
+    const conditions = WMO[code] || "mixed conditions";
+    const umbrella = RAIN.has(code) || pop >= 50;
+    // ASCII-friendly — emoji can force GV into flaky MMS delivery.
+    const prefix = umbrella ? "Umbrella:" : "Weather:";
+    return `${prefix} ${label} in ${city}: ${conditions}, ${hi}/${lo}F${
+      umbrella ? " - grab an umbrella" : ""
+    }`;
+  } catch (e) {
+    console.error("formatWeatherText failed", e);
+    return "Weather unavailable right now.";
+  }
 }
