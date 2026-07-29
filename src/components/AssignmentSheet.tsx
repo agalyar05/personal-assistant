@@ -28,6 +28,7 @@ import {
   ASSIGNMENT_STATUS_LABELS,
   isSubmittedStyle,
 } from "@/lib/types";
+import { faintClassTint } from "@/lib/themes";
 
 export type ColKey =
   | "title"
@@ -139,6 +140,12 @@ export function AssignmentSheet({
   const courseLabel = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of courses) m.set(c.id, c.code || c.name);
+    return m;
+  }, [courses]);
+
+  const courseColor = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of courses) m.set(c.id, c.color);
     return m;
   }, [courses]);
 
@@ -722,6 +729,31 @@ export function AssignmentSheet({
     const common =
       "w-full bg-transparent px-0.5 py-0.5 text-sm outline-none";
 
+    // Class is always a real dropdown (sheet cell clicks were blocking selects).
+    if (col === "courseId") {
+      return (
+        <select
+          ref={setRef}
+          className={`${common} cursor-pointer`}
+          value={a.courseId || ""}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const courseId = e.target.value || null;
+            onChangeLocal(a.id, { courseId });
+            void onPatch({ id: a.id, courseId });
+          }}
+        >
+          <option value="">—</option>
+          {courses.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.code || c.name}
+            </option>
+          ))}
+        </select>
+      );
+    }
+
     // Display mode — looks like a sheet cell
     if (!isEdit) {
       if (col === "title") {
@@ -753,32 +785,14 @@ export function AssignmentSheet({
       );
     }
 
-    if (col === "courseId") {
-      return (
-        <select
-          ref={setRef}
-          className={common}
-          value={a.courseId || ""}
-          onChange={(e) => {
-            void onPatch({ id: a.id, courseId: e.target.value || null });
-            setEditing(false);
-          }}
-        >
-          <option value="">—</option>
-          {courses.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.code || c.name}
-            </option>
-          ))}
-        </select>
-      );
-    }
     if (col === "status") {
       return (
         <select
           ref={setRef}
           className={common}
           value={a.status}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
           onChange={(e) => {
             void onPatch({
               id: a.id,
@@ -801,6 +815,8 @@ export function AssignmentSheet({
           ref={setRef}
           className={common}
           value={a.difficulty}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
           onChange={(e) => {
             void onPatch({
               id: a.id,
@@ -962,7 +978,10 @@ export function AssignmentSheet({
             </tr>
           </thead>
           <tbody>
-            {rows.map((a, rowIdx) => (
+            {rows.map((a, rowIdx) => {
+              const classHex = a.courseId ? courseColor.get(a.courseId) : null;
+              const rowTint = classHex ? faintClassTint(classHex) : undefined;
+              return (
               <tr
                 key={a.id}
                 onContextMenu={(e) => openRowMenu(e, rowIdx)}
@@ -978,12 +997,17 @@ export function AssignmentSheet({
                   void reorderRows(from, rowIdx);
                 }}
                 className={`${
-                  rowIdx % 2 === 0 ? "bg-white/40" : "bg-transparent"
+                  !rowTint
+                    ? rowIdx % 2 === 0
+                      ? "bg-white/40"
+                      : "bg-transparent"
+                    : ""
                 } ${
                   isSubmittedStyle(a.status)
-                    ? "bg-stone-100/80 text-[var(--muted)] line-through opacity-70"
+                    ? "text-[var(--muted)] line-through opacity-70"
                     : ""
                 } ${dragRowIdx === rowIdx ? "opacity-50" : ""}`}
+                style={rowTint ? { backgroundColor: rowTint } : undefined}
               >
                 <td
                   draggable
@@ -993,7 +1017,8 @@ export function AssignmentSheet({
                     e.dataTransfer.setData("text/plain", String(rowIdx));
                   }}
                   onDragEnd={() => setDragRowIdx(null)}
-                  className="sticky left-0 z-10 cursor-grab border-b border-r border-[var(--line)] bg-[var(--card)] px-1 py-0 text-center font-mono text-[10px] text-[var(--muted)] active:cursor-grabbing"
+                  className="sticky left-0 z-10 cursor-grab border-b border-r border-[var(--line)] px-1 py-0 text-center font-mono text-[10px] text-[var(--muted)] active:cursor-grabbing"
+                  style={{ backgroundColor: rowTint || "var(--card)" }}
                   title="Drag to reorder · right-click for menu"
                 >
                   {rowIdx + 1}
@@ -1027,6 +1052,16 @@ export function AssignmentSheet({
                       }`}
                       onMouseDown={(e) => {
                         if (e.button !== 0) return;
+                        const tag = (e.target as HTMLElement).tagName;
+                        if (
+                          tag === "SELECT" ||
+                          tag === "OPTION" ||
+                          tag === "INPUT" ||
+                          tag === "A" ||
+                          tag === "BUTTON"
+                        ) {
+                          return;
+                        }
                         e.preventDefault();
                         sheetRef.current?.focus();
                         if (e.shiftKey && active) {
@@ -1092,7 +1127,8 @@ export function AssignmentSheet({
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {!rows.length && (

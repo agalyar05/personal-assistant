@@ -139,18 +139,17 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${to(r)}${to(g)}${to(b)}`;
 }
 
-/** Theme-tuned hue “homes” — palette still spans the wheel for distinguishability. */
-const THEME_HUE_BIAS: Record<ThemeId, number> = {
-  harbor: 175,
-  meadow: 95,
-  sunset: 22,
-  slate: 215,
-  custom: 175,
+/** Theme-tuned hue bands — muted chips stay on-palette instead of rainbow. */
+const THEME_HUE_BAND: Record<ThemeId, { start: number; span: number }> = {
+  harbor: { start: 150, span: 130 }, // seafoam → deep teal → slate-blue
+  meadow: { start: 60, span: 115 }, // olive → leaf → pine
+  sunset: { start: 355, span: 75 }, // warm rose → clay → amber
+  slate: { start: 195, span: 115 }, // steel → ink-blue → soft violet
+  custom: { start: 160, span: 130 },
 };
 
 /**
- * Build `count` chip colors that fit the active theme and stay visually distinct.
- * Spaced around the hue wheel from the theme accent, with S/L locked to readable chip range.
+ * Build `count` muted, theme-fitting chip colors that stay distinguishable.
  */
 export function classPaletteForTheme(
   theme: UiThemeSettings,
@@ -159,23 +158,45 @@ export function classPaletteForTheme(
   const n = Math.max(1, Math.floor(count));
   const resolved = resolveThemeColors(theme);
   const accent = hexToHsl(resolved.accent);
-  const bias =
+  const band =
     theme.id === "custom"
-      ? accent.h || THEME_HUE_BIAS.custom
-      : THEME_HUE_BIAS[theme.id] ?? accent.h;
-  const sat = clamp(accent.s || 55, 48, 72);
-  const lit = clamp(accent.l || 38, 30, 44);
+      ? {
+          start: ((accent.h || 160) - 50 + 360) % 360,
+          span: 130,
+        }
+      : THEME_HUE_BAND[theme.id];
+
+  // Soft / dusty — readable as chips, not neon.
+  const satBase = clamp((accent.s || 40) * 0.55, 22, 38);
+  const litBase = clamp(Math.max(accent.l || 40, 44), 42, 56);
 
   const out: string[] = [];
   for (let i = 0; i < n; i++) {
-    // Even spacing + slight offset so index 0 lands near theme accent.
-    const h = (bias + (i * 360) / n) % 360;
-    // Alternate lightness a touch so adjacent hues read more different.
-    const l = clamp(lit + (i % 2 === 0 ? -2 : 3), 28, 46);
-    const s = clamp(sat + (i % 3) * 4 - 4, 46, 78);
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const h = (band.start + t * band.span) % 360;
+    // Stagger lightness so neighbors stay distinct even when hues are close.
+    const l = clamp(litBase + (i % 3) * 4 - 4, 38, 58);
+    const s = clamp(satBase + (i % 2) * 5, 20, 42);
     out.push(hslToHex(h, s, l));
   }
   return out;
+}
+
+/** Soft wash of a class color for sheet row backgrounds. */
+export function faintClassTint(hex: string, alpha = 0.14): string {
+  const raw = hex.replace("#", "").trim();
+  const full =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : raw.padEnd(6, "0").slice(0, 6);
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  if ([r, g, b].some((n) => Number.isNaN(n))) return "transparent";
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /** @deprecated Prefer classPaletteForTheme — kept for any stray callers. */
