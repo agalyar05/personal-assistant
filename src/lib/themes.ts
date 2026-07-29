@@ -74,73 +74,129 @@ export function themeToCssVars(colors: ThemeColors): Record<string, string> {
   };
 }
 
-/** Distinct class/chip colors tuned to each UI theme vibe. */
-export const CLASS_COLOR_SUGGESTIONS: Record<
-  ThemeId,
-  { hex: string; label: string }[]
-> = {
-  harbor: [
-    { hex: "#0f766e", label: "Teal" },
-    { hex: "#0369a1", label: "Ocean" },
-    { hex: "#4f46e5", label: "Indigo" },
-    { hex: "#7c3aed", label: "Violet" },
-    { hex: "#be185d", label: "Rose" },
-    { hex: "#c2410c", label: "Clay" },
-    { hex: "#a16207", label: "Amber" },
-    { hex: "#15803d", label: "Forest" },
-    { hex: "#0e7490", label: "Cyan" },
-    { hex: "#334155", label: "Slate" },
-  ],
-  meadow: [
-    { hex: "#4d7c0f", label: "Leaf" },
-    { hex: "#15803d", label: "Moss" },
-    { hex: "#0f766e", label: "Pine" },
-    { hex: "#a16207", label: "Honey" },
-    { hex: "#b45309", label: "Rust" },
-    { hex: "#9f1239", label: "Berry" },
-    { hex: "#6d28d9", label: "Plum" },
-    { hex: "#1d4ed8", label: "Bluebell" },
-    { hex: "#0e7490", label: "Stream" },
-    { hex: "#3f6212", label: "Olive" },
-  ],
-  sunset: [
-    { hex: "#c2410c", label: "Ember" },
-    { hex: "#ea580c", label: "Flame" },
-    { hex: "#b45309", label: "Copper" },
-    { hex: "#be123c", label: "Crimson" },
-    { hex: "#9f1239", label: "Wine" },
-    { hex: "#7e22ce", label: "Fig" },
-    { hex: "#1d4ed8", label: "Dusk" },
-    { hex: "#0f766e", label: "Lagoon" },
-    { hex: "#a16207", label: "Gold" },
-    { hex: "#44403c", label: "Char" },
-  ],
-  slate: [
-    { hex: "#334155", label: "Steel" },
-    { hex: "#0f766e", label: "Teal" },
-    { hex: "#1d4ed8", label: "Cobalt" },
-    { hex: "#6d28d9", label: "Iris" },
-    { hex: "#be185d", label: "Magenta" },
-    { hex: "#c2410c", label: "Rust" },
-    { hex: "#a16207", label: "Brass" },
-    { hex: "#15803d", label: "Green" },
-    { hex: "#0e7490", label: "Aqua" },
-    { hex: "#64748b", label: "Fog" },
-  ],
-  custom: [
-    { hex: "#0f766e", label: "Teal" },
-    { hex: "#1d4ed8", label: "Blue" },
-    { hex: "#7c3aed", label: "Purple" },
-    { hex: "#be185d", label: "Pink" },
-    { hex: "#c2410c", label: "Orange" },
-    { hex: "#a16207", label: "Gold" },
-    { hex: "#15803d", label: "Green" },
-    { hex: "#0e7490", label: "Cyan" },
-    { hex: "#334155", label: "Slate" },
-    { hex: "#9f1239", label: "Red" },
-  ],
+function clamp(n: number, lo: number, hi: number) {
+  return Math.min(hi, Math.max(lo, n));
+}
+
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const raw = hex.replace("#", "").trim();
+  const full =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : raw.padEnd(6, "0").slice(0, 6);
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l: l * 100 };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const hh = ((h % 360) + 360) % 360;
+  const ss = clamp(s, 0, 100) / 100;
+  const ll = clamp(l, 0, 100) / 100;
+  const c = (1 - Math.abs(2 * ll - 1)) * ss;
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = ll - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hh < 60) {
+    r = c;
+    g = x;
+  } else if (hh < 120) {
+    r = x;
+    g = c;
+  } else if (hh < 180) {
+    g = c;
+    b = x;
+  } else if (hh < 240) {
+    g = x;
+    b = c;
+  } else if (hh < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const to = (v: number) =>
+    Math.round((v + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+/** Theme-tuned hue “homes” — palette still spans the wheel for distinguishability. */
+const THEME_HUE_BIAS: Record<ThemeId, number> = {
+  harbor: 175,
+  meadow: 95,
+  sunset: 22,
+  slate: 215,
+  custom: 175,
 };
 
+/**
+ * Build `count` chip colors that fit the active theme and stay visually distinct.
+ * Spaced around the hue wheel from the theme accent, with S/L locked to readable chip range.
+ */
+export function classPaletteForTheme(
+  theme: UiThemeSettings,
+  count: number,
+): string[] {
+  const n = Math.max(1, Math.floor(count));
+  const resolved = resolveThemeColors(theme);
+  const accent = hexToHsl(resolved.accent);
+  const bias =
+    theme.id === "custom"
+      ? accent.h || THEME_HUE_BIAS.custom
+      : THEME_HUE_BIAS[theme.id] ?? accent.h;
+  const sat = clamp(accent.s || 55, 48, 72);
+  const lit = clamp(accent.l || 38, 30, 44);
+
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) {
+    // Even spacing + slight offset so index 0 lands near theme accent.
+    const h = (bias + (i * 360) / n) % 360;
+    // Alternate lightness a touch so adjacent hues read more different.
+    const l = clamp(lit + (i % 2 === 0 ? -2 : 3), 28, 46);
+    const s = clamp(sat + (i % 3) * 4 - 4, 46, 78);
+    out.push(hslToHex(h, s, l));
+  }
+  return out;
+}
+
+/** @deprecated Prefer classPaletteForTheme — kept for any stray callers. */
 export function classColorsForTheme(themeId: ThemeId) {
-  return CLASS_COLOR_SUGGESTIONS[themeId] || CLASS_COLOR_SUGGESTIONS.harbor;
+  return classPaletteForTheme({ id: themeId, custom: DEFAULT_THEME_CUSTOM }, 10).map(
+    (hex, i) => ({ hex, label: `Color ${i + 1}` }),
+  );
+}
+
+export function nextUnusedClassColor(
+  theme: UiThemeSettings,
+  usedHexes: string[],
+  minSlots = 8,
+): string {
+  const used = new Set(usedHexes.map((h) => h.toLowerCase()));
+  const palette = classPaletteForTheme(
+    theme,
+    Math.max(minSlots, usedHexes.length + 1),
+  );
+  return (
+    palette.find((hex) => !used.has(hex.toLowerCase())) ||
+    palette[usedHexes.length % palette.length]!
+  );
 }

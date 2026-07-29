@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Course, CourseLink } from "@/lib/types";
 import { isApplicationsGroup } from "@/lib/courses";
-import { classColorsForTheme } from "@/lib/themes";
+import {
+  classPaletteForTheme,
+  nextUnusedClassColor,
+} from "@/lib/themes";
 import { useUiTheme } from "@/components/ThemePicker";
 
 const MAX_LINKS = 5;
@@ -25,15 +28,18 @@ export default function GroupsPage() {
   const [msg, setMsg] = useState("");
   const [editingLinksId, setEditingLinksId] = useState<string | null>(null);
   const [draftLinks, setDraftLinks] = useState<CourseLink[]>([]);
-  const suggestions = classColorsForTheme(theme.id);
   const [form, setForm] = useState({
     name: "",
     code: "",
-    color: suggestions[0]?.hex || "#0f766e",
     professor: "",
     schedule: "",
     links: emptyLinks() as CourseLink[],
   });
+
+  const palette = useMemo(
+    () => classPaletteForTheme(theme, Math.max(courses.length, 1)),
+    [theme, courses.length],
+  );
 
   const load = useCallback(async () => {
     const res = await fetch("/api/courses");
@@ -50,19 +56,14 @@ export default function GroupsPage() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    const stillSuggested = suggestions.some((s) => s.hex === form.color);
-    if (!stillSuggested && suggestions[0]) {
-      setForm((f) => ({ ...f, color: suggestions[0]!.hex }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theme.id]);
-
   async function saveCourse(partial?: Partial<Course> & { id?: string }) {
     const payload = partial || {
       name: form.name,
       code: form.code,
-      color: form.color,
+      color: nextUnusedClassColor(
+        theme,
+        courses.map((c) => c.color),
+      ),
       professor: form.professor,
       schedule: form.schedule,
       links: form.links.filter((l) => l.url.trim()),
@@ -84,7 +85,6 @@ export default function GroupsPage() {
       setForm({
         name: "",
         code: "",
-        color: suggestions[0]?.hex || "#0f766e",
         professor: "",
         schedule: "",
         links: emptyLinks(),
@@ -99,10 +99,14 @@ export default function GroupsPage() {
   async function remove(id: string) {
     const target = courses.find((c) => c.id === id);
     if (target && isApplicationsGroup(target)) {
-      setMsg("Applications is a built-in group — change its color instead of deleting.");
+      setMsg(
+        "Applications is a built-in group — change its color instead of deleting.",
+      );
       return;
     }
-    if (!confirm("Delete this class? Masterlist items will become unassigned.")) {
+    if (
+      !confirm("Delete this class? Masterlist items will become unassigned.")
+    ) {
       return;
     }
     await fetch("/api/courses", {
@@ -146,9 +150,9 @@ export default function GroupsPage() {
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
         <h2 className="display text-2xl">Groups</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Classes and color chips used across Masterlist. Applications is a
-          built-in group for scholarship deadlines — pick its color here.
-          links under each class. Palette suggestions follow your theme.
+          Classes and color chips used across Masterlist. New classes get an
+          unused theme color automatically — tap a swatch on a class to change
+          it. Applications is built-in for scholarship deadlines.
         </p>
         {msg && <p className="mt-3 text-sm text-[var(--accent)]">{msg}</p>}
       </section>
@@ -239,34 +243,6 @@ export default function GroupsPage() {
               </button>
             )}
           </div>
-        </div>
-        <p className="mt-4 text-xs uppercase tracking-wide text-[var(--muted)]">
-          Suggested colors
-        </p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {suggestions.map((s) => (
-            <button
-              key={s.hex}
-              type="button"
-              title={s.label}
-              onClick={() => setForm({ ...form, color: s.hex })}
-              className={`h-9 w-9 rounded-full border-2 ${
-                form.color === s.hex
-                  ? "border-[var(--ink)] scale-110"
-                  : "border-transparent"
-              }`}
-              style={{ background: s.hex }}
-            />
-          ))}
-          <label className="flex h-9 items-center gap-2 rounded-full border border-[var(--line)] bg-white px-3 text-xs text-[var(--muted)]">
-            Custom
-            <input
-              type="color"
-              className="h-6 w-6 cursor-pointer border-0 bg-transparent"
-              value={form.color}
-              onChange={(e) => setForm({ ...form, color: e.target.value })}
-            />
-          </label>
         </div>
         <button
           type="button"
@@ -399,24 +375,32 @@ export default function GroupsPage() {
                   </div>
                 )}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <div className="flex gap-1">
-                  {suggestions.slice(0, 6).map((s) => (
-                    <button
-                      key={s.hex}
-                      type="button"
-                      className="h-6 w-6 rounded-full border border-white/50"
-                      style={{ background: s.hex }}
-                      title={s.label}
-                      onClick={() =>
-                        void saveCourse({
-                          id: c.id,
-                          name: c.name,
-                          color: s.hex,
-                        })
-                      }
-                    />
-                  ))}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex max-w-[220px] flex-wrap gap-1 sm:max-w-none">
+                  {palette.map((hex) => {
+                    const selected =
+                      c.color.toLowerCase() === hex.toLowerCase();
+                    return (
+                      <button
+                        key={hex}
+                        type="button"
+                        className={`h-6 w-6 rounded-full border-2 ${
+                          selected
+                            ? "border-[var(--ink)] scale-110"
+                            : "border-white/60"
+                        }`}
+                        style={{ background: hex }}
+                        title={hex}
+                        onClick={() =>
+                          void saveCourse({
+                            id: c.id,
+                            name: c.name,
+                            color: hex,
+                          })
+                        }
+                      />
+                    );
+                  })}
                 </div>
                 {!isApplicationsGroup(c) && (
                   <button
