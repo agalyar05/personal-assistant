@@ -47,51 +47,81 @@ async function syncApplicationReminder(
 }
 
 export async function GET() {
-  const applications = await db.getApplications();
-  return NextResponse.json({ applications });
+  try {
+    const applications = await db.getApplications();
+    return NextResponse.json({ applications });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to load applications";
+    console.error("applications GET", e);
+    return NextResponse.json({ error: message, applications: [] }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as Partial<Application> & {
-    action?: "delete";
-    id?: string;
-    title?: string;
-  };
+  try {
+    const body = (await req.json()) as Partial<Application> & {
+      action?: "delete";
+      id?: string;
+      title?: string;
+    };
 
-  if (body.action === "delete" && body.id) {
-    await db.deleteApplication(body.id);
-    return NextResponse.json({ ok: true });
+    if (body.action === "delete" && body.id) {
+      await db.deleteApplication(body.id);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (!body.title?.trim()) {
+      return NextResponse.json({ error: "title required" }, { status: 400 });
+    }
+
+    const patch: Partial<Application> & { title: string } = {
+      title: body.title.trim(),
+    };
+    if (body.id) patch.id = body.id;
+    if ("kind" in body) patch.kind = body.kind as ApplicationKind;
+    if ("status" in body) patch.status = body.status as ApplicationStatus;
+    if ("url" in body) {
+      patch.url = normalizeApplicationUrl(String(body.url || ""));
+    }
+    if ("description" in body) {
+      patch.description = String(body.description || "");
+    }
+    if ("deadline" in body) {
+      patch.deadline = body.deadline
+        ? String(body.deadline).slice(0, 10)
+        : null;
+    }
+    if ("remindAt" in body) {
+      patch.remindAt = body.remindAt ? String(body.remindAt) : null;
+    }
+    if ("notes" in body) patch.notes = String(body.notes || "");
+    if ("sortOrder" in body) patch.sortOrder = Number(body.sortOrder || 0);
+
+    let app = await db.upsertApplication(patch);
+
+    try {
+      if (
+        "remindAt" in body ||
+        "title" in body ||
+        "url" in body ||
+        "description" in body ||
+        "deadline" in body ||
+        "kind" in body
+      ) {
+        const all = await db.getApplications();
+        const fresh = all.find((a) => a.id === app.id) || app;
+        app = await syncApplicationReminder(fresh);
+      }
+    } catch (remindErr) {
+      // App is saved; reminder sync is best-effort
+      console.error("application reminder sync failed", remindErr);
+    }
+
+    const applications = await db.getApplications();
+    return NextResponse.json({ application: app, applications });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Save failed";
+    console.error("applications POST", e);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  if (!body.title?.trim()) {
-    return NextResponse.json({ error: "title required" }, { status: 400 });
-  }
-
-  const patch: Partial<Application> & { title: string } = {
-    title: body.title.trim(),
-  };
-  if (body.id) patch.id = body.id;
-  if ("kind" in body) patch.kind = body.kind as ApplicationKind;
-  if ("status" in body) patch.status = body.status as ApplicationStatus;
-  if ("url" in body) patch.url = normalizeApplicationUrl(String(body.url || ""));
-  if ("description" in body) patch.description = String(body.description || "");
-  if ("deadline" in body) {
-    patch.deadline = body.deadline ? String(body.deadline).slice(0, 10) : null;
-  }
-  if ("remindAt" in body) {
-    patch.remindAt = body.remindAt ? String(body.remindAt) : null;
-  }
-  if ("notes" in body) patch.notes = String(body.notes || "");
-  if ("sortOrder" in body) patch.sortOrder = Number(body.sortOrder || 0);
-
-  let app = await db.upsertApplication(patch);
-
-  // Re-read merged fields for reminder sync when remindAt/title/url change
-  if ("remindAt" in body || "title" in body || "url" in body || "description" in body || "deadline" in body || "kind" in body) {
-    const all = await db.getApplications();
-    const fresh = all.find((a) => a.id === app.id) || app;
-    app = await syncApplicationReminder(fresh);
-  }
-
-  return NextResponse.json({ application: app });
 }

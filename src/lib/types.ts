@@ -55,6 +55,12 @@ export type DashboardLayout = {
   widgets: DashboardWidget[];
 };
 
+export type ThinkingSheetData = {
+  colCount: number;
+  rowCount: number;
+  cells: Record<string, string>;
+};
+
 export type AppSettings = {
   timezone: string;
   weatherCity: string;
@@ -68,6 +74,7 @@ export type AppSettings = {
   uiTheme: UiThemeSettings;
   listCatalog: string[];
   dashboardLayout: DashboardLayout;
+  thinkingSheet: ThinkingSheetData;
 };
 
 export type AssignmentStatus =
@@ -235,6 +242,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
       { id: "todo", type: "todo", span: 1 },
       { id: "shortcuts", type: "shortcuts", span: 3 },
     ],
+  },
+  thinkingSheet: {
+    colCount: 12,
+    rowCount: 30,
+    cells: {},
   },
 };
 

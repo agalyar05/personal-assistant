@@ -139,7 +139,7 @@ export default function AssignmentsPage() {
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="display text-xl leading-tight">Assignments</h2>
+            <h2 className="display text-xl leading-tight">Masterlist</h2>
             <p className="mt-0.5 hidden text-xs text-[var(--muted)] sm:block">
               Classes in{" "}
               <a href="/admin/groups" className="text-[var(--accent)] underline">

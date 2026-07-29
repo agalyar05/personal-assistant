@@ -96,7 +96,7 @@ export default function GroupsPage() {
   }
 
   async function remove(id: string) {
-    if (!confirm("Delete this class? Assignments will become unassigned.")) {
+    if (!confirm("Delete this class? Masterlist items will become unassigned.")) {
       return;
     }
     await fetch("/api/courses", {
@@ -140,7 +140,7 @@ export default function GroupsPage() {
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
         <h2 className="display text-2xl">Groups</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Classes and color chips used across Assignments. Add Canvas / syllabus
+          Classes and color chips used across Masterlist. Add Canvas / syllabus
           links under each class. Palette suggestions follow your theme.
         </p>
         {msg && <p className="mt-3 text-sm text-[var(--accent)]">{msg}</p>}

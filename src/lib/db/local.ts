@@ -47,6 +47,7 @@ async function readStore(): Promise<Store> {
           parsed.settings?.dashboardLayout?.widgets?.length
             ? parsed.settings.dashboardLayout
             : DEFAULT_STORE.settings.dashboardLayout,
+        thinkingSheet: parsed.settings?.thinkingSheet || DEFAULT_STORE.settings.thinkingSheet,
       },
       listItems: (parsed.listItems || []).map((i) => ({
         ...i,
@@ -102,6 +103,7 @@ export async function updateSettings(
       },
     },
     dashboardLayout: patch.dashboardLayout ?? store.settings.dashboardLayout,
+    thinkingSheet: patch.thinkingSheet ?? store.settings.thinkingSheet,
   };
   await writeStore(store);
   return store.settings;

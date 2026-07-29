@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   daysBeforeDeadline,
   normalizeApplicationUrl,
+  parseApplicationPaste,
   remindAtFromDateAndTime,
   sortApplications,
 } from "@/lib/applications";
@@ -30,7 +31,7 @@ const emptyForm = {
   remindDate: "",
   remindTime: "09:00",
   notes: "",
-  remindPreset: "custom" as "none" | "7" | "1" | "custom",
+  remindPreset: "none" as "none" | "7" | "1" | "custom",
 };
 
 export default function ApplicationsPage() {
@@ -38,14 +39,19 @@ export default function ApplicationsPage() {
   const [view, setView] = useState<View>("master");
   const [msg, setMsg] = useState("");
   const [filter, setFilter] = useState<ApplicationStatus | "open" | "all">(
-    "open",
+    "all",
   );
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [pasteBlock, setPasteBlock] = useState("");
 
   const load = useCallback(async () => {
     const res = await fetch("/api/applications");
     const json = await res.json();
+    if (!res.ok) {
+      setMsg(json.error || "Could not load applications");
+      return;
+    }
     setApps(sortApplications(json.applications || []));
   }, []);
 
@@ -79,6 +85,36 @@ export default function ApplicationsPage() {
     return null;
   }
 
+  function applyPaste() {
+    const parsed = parseApplicationPaste(pasteBlock);
+    setForm((prev) => ({
+      ...prev,
+      title: parsed.title || prev.title,
+      kind: (parsed.kind || prev.kind) as ApplicationKind,
+      url: parsed.url || prev.url,
+      description: parsed.description || prev.description,
+      deadline: parsed.deadline || prev.deadline,
+      notes: parsed.notes
+        ? prev.notes
+          ? `${prev.notes}\n${parsed.notes}`
+          : parsed.notes
+        : prev.notes,
+    }));
+    const filled = [
+      parsed.title && "title",
+      parsed.kind && "type",
+      parsed.url && "link",
+      parsed.deadline && "deadline",
+      parsed.description && "description",
+      parsed.notes && "notes",
+    ].filter(Boolean);
+    setMsg(
+      filled.length
+        ? `Filled from paste: ${filled.join(", ")} — review and save`
+        : "Nothing recognized in that paste — fields left as-is",
+    );
+  }
+
   async function save() {
     if (!form.title.trim()) {
       setMsg("Title required");
@@ -100,10 +136,18 @@ export default function ApplicationsPage() {
         notes: form.notes,
       }),
     });
+    const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setMsg("Save failed");
+      setMsg(json.error || "Save failed — check that the applications table exists in Supabase");
       return;
     }
+    if (Array.isArray(json.applications)) {
+      setApps(sortApplications(json.applications));
+    } else {
+      await load();
+    }
+    setFilter("all");
+    setView("master");
     setMsg(
       remindAt
         ? `Saved — SMS reminder set for ${remindAt.replace("T", " ")}`
@@ -112,8 +156,8 @@ export default function ApplicationsPage() {
           : "Added to master list",
     );
     setForm(emptyForm);
+    setPasteBlock("");
     setEditingId(null);
-    await load();
   }
 
   function startEdit(a: Application) {
@@ -196,6 +240,27 @@ export default function ApplicationsPage() {
         <h3 className="text-sm font-medium uppercase tracking-wide text-[var(--muted)]">
           {editingId ? "Edit application" : "Add to master list"}
         </h3>
+        {!editingId && (
+          <div className="mt-3 space-y-2">
+            <label className="block text-xs text-[var(--muted)]">
+              Paste a scholarship / job blurb — we fill what we can
+              <textarea
+                className="mt-1 min-h-24 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                placeholder="Paste email, listing, or notes here…"
+                value={pasteBlock}
+                onChange={(e) => setPasteBlock(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={applyPaste}
+              disabled={!pasteBlock.trim()}
+              className="rounded-xl border border-[var(--line)] bg-white px-3 py-1.5 text-sm disabled:opacity-40"
+            >
+              Fill fields from paste
+            </button>
+          </div>
+        )}
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <input
             className="rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm sm:col-span-2"

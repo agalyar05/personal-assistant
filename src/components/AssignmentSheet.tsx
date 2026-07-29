@@ -111,6 +111,9 @@ export function AssignmentSheet({
   const [editing, setEditing] = useState(false);
   const [fillMode, setFillMode] = useState<FillMode>("weekly");
   const [fillDragging, setFillDragging] = useState(false);
+  const [rangeDragging, setRangeDragging] = useState(false);
+  const [dragRowIdx, setDragRowIdx] = useState<number | null>(null);
+  const fillStartRef = useRef<CellPos | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement | HTMLSelectElement>>(
     new Map(),
@@ -593,13 +596,33 @@ export function AssignmentSheet({
   );
 
   useEffect(() => {
-    if (!fillDragging) return;
+    if (!fillDragging && !rangeDragging) return;
     function up() {
       setFillDragging(false);
+      setRangeDragging(false);
     }
     window.addEventListener("mouseup", up);
     return () => window.removeEventListener("mouseup", up);
-  }, [fillDragging]);
+  }, [fillDragging, rangeDragging]);
+
+  async function reorderRows(fromIdx: number, toIdx: number) {
+    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
+    const next = [...rows];
+    const [moved] = next.splice(fromIdx, 1);
+    if (!moved) return;
+    next.splice(toIdx, 0, moved);
+    const patchRows = next.map((row, i) => ({
+      id: row.id,
+      title: row.title,
+      sortOrder: i + 1,
+    }));
+    // Optimistic local order via sortOrder patches
+    for (const p of patchRows) {
+      onChangeLocal(p.id, { sortOrder: p.sortOrder });
+    }
+    await onBulk(patchRows);
+    onMsg("Rows reordered");
+  }
 
   function onHeaderDrop(target: ColKey) {
     if (!dragCol || dragCol === target) return;
@@ -786,14 +809,6 @@ export function AssignmentSheet({
     );
   }
 
-  const activeLabel = active
-    ? `${cols[active.col]?.toUpperCase() || ""}${active.row + 1}`
-    : "";
-  const activeValue =
-    active && rows[active.row] && cols[active.col]
-      ? getDisplay(rows[active.row]!, cols[active.col]!)
-      : "";
-
   return (
     <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--card)]">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--line)] px-3 py-2">
@@ -824,20 +839,8 @@ export function AssignmentSheet({
           Fill down
         </button>
         <span className="hidden text-xs text-[var(--muted)] lg:inline">
-          Arrows move · Enter/F2 edit · ⌘/Ctrl+C/V · ⌘/Ctrl+D fill from above ·
-          drag corner handle
-        </span>
-      </div>
-
-      {/* Formula bar */}
-      <div className="flex items-center gap-2 border-b border-[var(--line)] bg-white/50 px-3 py-1.5 text-sm">
-        <span className="w-16 shrink-0 rounded border border-[var(--line)] bg-[var(--card)] px-2 py-0.5 text-center font-mono text-xs text-[var(--muted)]">
-          {activeLabel || "—"}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[var(--ink)]">
-          {activeValue || (
-            <span className="text-[var(--muted)]">Select a cell</span>
-          )}
+          Drag to select · Shift+click · drag # to reorder rows · Enter/F2 edit ·
+          ⌘/Ctrl+C/V
         </span>
       </div>
 
@@ -847,7 +850,7 @@ export function AssignmentSheet({
         onKeyDown={onSheetKeyDown}
         className="max-h-[min(75vh,900px)] overflow-auto outline-none focus:ring-1 focus:ring-[var(--accent)]/40"
       >
-        <table className="min-w-[1200px] w-full border-collapse text-sm">
+        <table className="min-w-[1200px] w-full border-collapse text-sm select-none">
           <thead className="sticky top-0 z-20 bg-[var(--card)]">
             <tr>
               <th className="sticky left-0 z-30 w-10 border-b border-r border-[var(--line)] bg-[var(--card)] px-1 py-1.5 text-center text-[10px] font-medium text-[var(--muted)]">
@@ -876,15 +879,36 @@ export function AssignmentSheet({
             {rows.map((a, rowIdx) => (
               <tr
                 key={a.id}
+                onDragOver={(e) => {
+                  if (dragRowIdx == null) return;
+                  e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragRowIdx == null) return;
+                  const from = dragRowIdx;
+                  setDragRowIdx(null);
+                  void reorderRows(from, rowIdx);
+                }}
                 className={`${
                   rowIdx % 2 === 0 ? "bg-white/40" : "bg-transparent"
                 } ${
                   isSubmittedStyle(a.status)
                     ? "bg-stone-100/80 text-[var(--muted)] line-through opacity-70"
                     : ""
-                }`}
+                } ${dragRowIdx === rowIdx ? "opacity-50" : ""}`}
               >
-                <td className="sticky left-0 z-10 border-b border-r border-[var(--line)] bg-[var(--card)] px-1 py-0 text-center font-mono text-[10px] text-[var(--muted)]">
+                <td
+                  draggable
+                  onDragStart={(e) => {
+                    setDragRowIdx(rowIdx);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", String(rowIdx));
+                  }}
+                  onDragEnd={() => setDragRowIdx(null)}
+                  className="sticky left-0 z-10 cursor-grab border-b border-r border-[var(--line)] bg-[var(--card)] px-1 py-0 text-center font-mono text-[10px] text-[var(--muted)] active:cursor-grabbing"
+                  title="Drag to reorder row"
+                >
                   {rowIdx + 1}
                 </td>
                 {cols.map((col, colIdx) => {
@@ -918,27 +942,37 @@ export function AssignmentSheet({
                         if (e.button !== 0) return;
                         e.preventDefault();
                         sheetRef.current?.focus();
-                        selectCell(pos, {
-                          shift: e.shiftKey,
-                          edit: false,
-                        });
+                        if (e.shiftKey && active) {
+                          selectCell(pos, { shift: true, edit: false });
+                          return;
+                        }
+                        selectCell(pos, { edit: false });
+                        setRangeDragging(true);
                       }}
                       onDoubleClick={() => {
                         selectCell(pos, { edit: true });
                       }}
                       onMouseEnter={() => {
-                        if (fillDragging && active) {
-                          setAnchor(active);
-                          setActive({ row: rowIdx, col: active.col });
+                        if (fillDragging && fillStartRef.current) {
+                          const start = fillStartRef.current;
+                          setAnchor(start);
+                          setActive({ row: rowIdx, col: start.col });
+                          return;
+                        }
+                        if (rangeDragging && anchor) {
+                          setActive(pos);
                         }
                       }}
                       onMouseUp={() => {
-                        if (fillDragging && active) {
+                        if (fillDragging && fillStartRef.current) {
+                          const start = fillStartRef.current;
                           setFillDragging(false);
-                          void applyFillRange(active, rowIdx, active.col);
-                          setAnchor(active);
-                          setActive({ row: rowIdx, col: active.col });
+                          fillStartRef.current = null;
+                          void applyFillRange(start, rowIdx, start.col);
+                          setAnchor(start);
+                          setActive({ row: rowIdx, col: start.col });
                         }
+                        setRangeDragging(false);
                       }}
                     >
                       {renderEditor(a, col, pos)}
@@ -948,6 +982,11 @@ export function AssignmentSheet({
                           onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
+                            setRangeDragging(false);
+                            if (active) {
+                              fillStartRef.current = active;
+                              setAnchor(active);
+                            }
                             setFillDragging(true);
                           }}
                           title="Drag to fill"
@@ -971,7 +1010,7 @@ export function AssignmentSheet({
         </table>
         {!rows.length && (
           <p className="p-4 text-sm text-[var(--muted)]">
-            No assignments yet — add a row to start.
+            No items yet — add a row to start.
           </p>
         )}
       </div>

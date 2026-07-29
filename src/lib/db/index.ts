@@ -66,6 +66,17 @@ export async function getSettings(): Promise<AppSettings> {
       payload.dashboardLayout?.widgets?.length
         ? payload.dashboardLayout
         : DEFAULT_SETTINGS.dashboardLayout,
+    thinkingSheet: {
+      colCount: Math.max(
+        4,
+        Math.min(52, Number(payload.thinkingSheet?.colCount) || 12),
+      ),
+      rowCount: Math.max(
+        5,
+        Math.min(200, Number(payload.thinkingSheet?.rowCount) || 30),
+      ),
+      cells: (payload.thinkingSheet?.cells || {}) as Record<string, string>,
+    },
   };
 }
 
@@ -87,6 +98,7 @@ export async function updateSettings(
       },
     },
     dashboardLayout: patch.dashboardLayout ?? current.dashboardLayout,
+    thinkingSheet: patch.thinkingSheet ?? current.thinkingSheet,
   };
   const sb = client();
   await sb.from("app_settings").upsert({ id: 1, payload: next });
@@ -633,7 +645,11 @@ function rowToApplication(row: Record<string, unknown>): Application {
 export async function getApplications(): Promise<Application[]> {
   if (!hasSupabase()) return local.getApplications();
   const sb = client();
-  const { data } = await sb.from("applications").select("*").order("sort_order");
+  const { data, error } = await sb
+    .from("applications")
+    .select("*")
+    .order("sort_order");
+  if (error) throw new Error(error.message);
   return (data || [])
     .map((r) => rowToApplication(r as Record<string, unknown>))
     .sort((a, b) => {
