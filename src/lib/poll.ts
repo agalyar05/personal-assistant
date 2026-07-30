@@ -108,7 +108,7 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   }
   log(`Sending morning briefing for ${today} (${tz})...`);
 
-  let calendarBlock = "Calendar: nothing on the schedule.";
+  let calendarBlock = "Your calendar looks free today — nice breathing room.";
   try {
     const cal = calendar();
     const start = wallTimeToUtc(today, 0, 0, tz);
@@ -136,39 +136,48 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
           : "All day";
         return `${i + 1}. ${when} - ${e.summary || "(no title)"}`;
       });
-      calendarBlock = ["Calendar today:", ...lines].join("\n");
+      calendarBlock = ["Here's what's on your calendar today:", ...lines].join(
+        "\n",
+      );
     }
   } catch (e) {
     log(`Calendar for briefing failed: ${e}`);
-    calendarBlock = "Calendar: couldn't load events.";
+    calendarBlock =
+      "Couldn't peek at your Google Calendar just now — I'll try again next time.";
   }
 
   const weather = await formatWeatherText(0);
 
-  let dueBlock = "Nothing due today.";
+  let dueBlock = "Nothing due today — enjoy the lighter load.";
   try {
     dueBlock = await formatDueSummary("today", tz);
+    if (dueBlock.startsWith("Nothing due")) {
+      dueBlock = "Nothing due today — enjoy the lighter load.";
+    } else if (dueBlock.startsWith("Due today:")) {
+      dueBlock = dueBlock.replace("Due today:", "A few things due today:");
+    }
   } catch (e) {
     log(`Due summary for briefing failed: ${e}`);
-    dueBlock = "Due today: couldn't load.";
+    dueBlock = "Couldn't load what's due today — check Masterlist when you can.";
   }
 
   const closers = [
-    "Have a great day!",
-    "Up and at em!",
-    "You've got this — make it count.",
-    "Go get em!",
-    "Knock it out of the park today.",
-    "Have a solid day!",
-    "Onward!",
+    "You've got this — go make today yours.",
+    "Up and at em! Make it a good one.",
+    "Small steps count. Have a lovely day!",
+    "Coffee (or tea) in hand — now go shine.",
+    "Be kind to yourself today. You've got this.",
+    "One thing at a time. Have a great day!",
+    "Go get 'em — and don't forget to smile.",
   ];
   // Stable pick for the calendar day (not a random quote).
   const dayNum = Number(today.replace(/-/g, "")) || 0;
   const closer = closers[dayNum % closers.length]!;
 
   // Order: calendar → due → weather → closer. Short parts for GV reliability.
+  // Still pulls from Google Calendar primary via OAuth.
   const parts = [
-    `Good morning!\n\n${calendarBlock}`,
+    `Good morning!\n\nHope you slept well.\n\n${calendarBlock}`,
     dueBlock,
     `${weather}\n\n${closer}`,
   ];

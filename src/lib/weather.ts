@@ -43,9 +43,10 @@ export async function formatWeatherText(daysAhead = 0): Promise<string> {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
       `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
+      `&temperature_unit=fahrenheit` +
       `&timezone=${encodeURIComponent(tz)}&forecast_days=3`;
     const res = await fetch(url);
-    if (!res.ok) return "Weather unavailable right now.";
+    if (!res.ok) return "Couldn't grab the weather just now — sorry!";
     const data = (await res.json()) as {
       daily?: {
         weathercode: number[];
@@ -55,7 +56,7 @@ export async function formatWeatherText(daysAhead = 0): Promise<string> {
       };
     };
     if (!data.daily?.weathercode?.length) {
-      return "Weather unavailable right now.";
+      return "Couldn't grab the weather just now — sorry!";
     }
     const i = Math.min(Math.max(daysAhead, 0), 2);
     const code = data.daily.weathercode[i] ?? 0;
@@ -64,15 +65,14 @@ export async function formatWeatherText(daysAhead = 0): Promise<string> {
     const pop = data.daily.precipitation_probability_max[i] ?? 0;
     const label =
       daysAhead === 0 ? "Today" : daysAhead === 1 ? "Tomorrow" : `Day +${daysAhead}`;
-    const conditions = WMO[code] || "mixed conditions";
+    const conditions = WMO[code] || "a mixed bag";
     const umbrella = RAIN.has(code) || pop >= 50;
-    // ASCII-friendly — emoji can force GV into flaky MMS delivery.
-    const prefix = umbrella ? "Umbrella:" : "Weather:";
-    return `${prefix} ${label} in ${city}: ${conditions}, ${hi}/${lo}F${
-      umbrella ? " - grab an umbrella" : ""
-    }`;
+    if (umbrella) {
+      return `Weather in ${city} ${label.toLowerCase()}: ${conditions}, high ${hi}F / low ${lo}F — maybe pack an umbrella?`;
+    }
+    return `Weather in ${city} ${label.toLowerCase()}: ${conditions}, high ${hi}F / low ${lo}F. Nice day for it.`;
   } catch (e) {
     console.error("formatWeatherText failed", e);
-    return "Weather unavailable right now.";
+    return "Couldn't grab the weather just now — sorry!";
   }
 }
