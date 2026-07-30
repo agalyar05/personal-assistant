@@ -1,62 +1,73 @@
 import * as db from "./db";
 import type { Reminder } from "./types";
-
-function localNow(timeZone: string): Date {
-  // Approximate local wall-clock via formatting (good enough for due checks)
-  const s = new Date().toLocaleString("en-US", { timeZone });
-  return new Date(s);
-}
-
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+import {
+  parseLocalIsoInTimezone,
+  wallTimeToUtc,
+  ymdInTimezone,
+} from "./zoned-time";
 
 function padTime(t: string): string {
   const [h, m] = t.split(":").map(Number);
   return `${String(h).padStart(2, "0")}:${String(m || 0).padStart(2, "0")}`;
 }
 
-export function reminderIsDue(r: Reminder, now: Date, timeZone: string): boolean {
+export function reminderIsDue(
+  r: Reminder,
+  now: Date,
+  timeZone: string,
+): boolean {
   if (r.sent) return false;
   if (r.snoozedUntil) {
-    const until = new Date(r.snoozedUntil);
+    // snoozedUntil may be stored as local ISO or absolute — prefer local parse.
+    const parsed = parseLocalIsoInTimezone(r.snoozedUntil, timeZone);
+    const until = parsed?.utc ?? new Date(r.snoozedUntil);
     if (!Number.isNaN(until.getTime()) && now < until) return false;
   }
 
   if (r.frequency === "once" || !r.fireTime) {
     if (!r.remindAt) return false;
-    const clean = r.remindAt.replace(/Z$/, "").replace(/\+00:00$/, "");
-    const dueAt = new Date(clean);
-    if (Number.isNaN(dueAt.getTime())) return false;
-    const nowLocal = localNow(timeZone);
-    return nowLocal >= dueAt;
+    const parsed = parseLocalIsoInTimezone(r.remindAt, timeZone);
+    if (!parsed) return false;
+    return now.getTime() >= parsed.utc.getTime();
   }
 
-  const today = ymd(localNow(timeZone));
+  const today = ymdInTimezone(now, timeZone);
   if (r.lastSent === today) return false;
+
   const fire = padTime(r.fireTime);
-  const nowLocal = localNow(timeZone);
   const [fh, fm] = fire.split(":").map(Number);
-  const scheduled = new Date(nowLocal);
-  scheduled.setHours(fh, fm, 0, 0);
-  if (nowLocal < scheduled) return false;
+  const scheduled = wallTimeToUtc(today, fh || 0, fm || 0, timeZone);
+  if (now < scheduled) return false;
+
+  // weekday from local calendar date (noon avoids DST edge weirdness)
+  const [y, mo, d] = today.split("-").map(Number);
+  const weekday = new Date(y!, mo! - 1, d!, 12, 0, 0).getDay();
 
   const freq = r.frequency.toLowerCase();
-  if (freq === "daily" || freq === "every day" || freq === "everyday") return true;
-  if (freq === "weekdays" || freq === "weekday") return nowLocal.getDay() > 0 && nowLocal.getDay() < 6;
+  if (freq === "daily" || freq === "every day" || freq === "everyday") {
+    return true;
+  }
+  if (freq === "weekdays" || freq === "weekday") {
+    return weekday > 0 && weekday < 6;
+  }
   if (freq.startsWith("weekly:")) {
     const codes = new Set(
-      freq.split(":")[1].toUpperCase().replace(/\s/g, "").split(","),
+      freq.split(":")[1]!.toUpperCase().replace(/\s/g, "").split(","),
     );
     const map = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
-    return codes.has(map[nowLocal.getDay()]);
+    return codes.has(map[weekday]!);
   }
   const dayMap: Record<string, number> = {
-    sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
-    thursday: 4, friday: 5, saturday: 6,
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
   };
   for (const [name, wd] of Object.entries(dayMap)) {
-    if (freq.includes(name)) return nowLocal.getDay() === wd;
+    if (freq.includes(name)) return weekday === wd;
   }
   return false;
 }
@@ -71,7 +82,10 @@ export async function getDueReminders(): Promise<Reminder[]> {
 
 export async function markReminderSent(id: string): Promise<void> {
   const settings = await db.getSettings();
-  const today = ymd(localNow(settings.timezone || "America/Detroit"));
+  const today = ymdInTimezone(
+    new Date(),
+    settings.timezone || "America/Detroit",
+  );
   const r = (await db.getReminders()).find((x) => x.id === id);
   if (!r) return;
   if (r.frequency === "once" || !r.fireTime) {

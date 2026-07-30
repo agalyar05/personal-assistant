@@ -13,78 +13,15 @@ import {
 import { getDueReminders, markReminderSent } from "./reminders";
 import { formatWeatherText } from "./weather";
 import { calendar } from "./sms/gmail";
+import {
+  addDaysYmd,
+  localHourMinute,
+  wallTimeToUtc,
+  ymdInTimezone,
+} from "./zoned-time";
 
 function log(msg: string) {
   console.error(msg);
-}
-
-function ymdInTimezone(date: Date, timeZone: string): string {
-  return date.toLocaleDateString("en-CA", { timeZone });
-}
-
-function localHourMinute(
-  date: Date,
-  timeZone: string,
-): { hour: number; minute: number } {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-      .formatToParts(date)
-      .map((p) => [p.type, p.value]),
-  );
-  let hour = parseInt(parts.hour || "0", 10);
-  if (hour === 24) hour = 0;
-  return { hour, minute: parseInt(parts.minute || "0", 10) };
-}
-
-/** UTC instant for Y-M-D HH:MM wall time in `timeZone`. */
-function wallTimeToUtc(
-  ymd: string,
-  hour: number,
-  minute: number,
-  timeZone: string,
-): Date {
-  const [y, mo, d] = ymd.split("-").map(Number);
-  let ms = Date.UTC(y!, mo! - 1, d!, hour, minute, 0);
-  for (let i = 0; i < 4; i++) {
-    const parts = Object.fromEntries(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      })
-        .formatToParts(new Date(ms))
-        .map((p) => [p.type, p.value]),
-    );
-    let ph = parseInt(parts.hour || "0", 10);
-    if (ph === 24) ph = 0;
-    const asIf = Date.UTC(
-      parseInt(parts.year!, 10),
-      parseInt(parts.month!, 10) - 1,
-      parseInt(parts.day!, 10),
-      ph,
-      parseInt(parts.minute!, 10),
-      parseInt(parts.second || "0", 10),
-    );
-    const want = Date.UTC(y!, mo! - 1, d!, hour, minute, 0);
-    ms += want - asIf;
-  }
-  return new Date(ms);
-}
-
-function addDaysYmd(ymd: string, days: number): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const dt = new Date(y!, m! - 1, d! + days, 12, 0, 0);
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
 
 async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {

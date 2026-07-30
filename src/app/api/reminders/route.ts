@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as db from "@/lib/db";
 import { listRemindersParts } from "@/lib/reminders";
+import { parseLocalIsoInTimezone } from "@/lib/zoned-time";
 
 export async function GET() {
   const reminders = await db.getReminders();
@@ -17,9 +18,22 @@ export async function POST(req: Request) {
   if (!body.message) {
     return NextResponse.json({ error: "message required" }, { status: 400 });
   }
+  const settings = await db.getSettings();
+  const tz = settings.timezone || "America/Detroit";
+  let remindAt = body.remindAt || null;
+  if (remindAt) {
+    const parsed = parseLocalIsoInTimezone(remindAt, tz);
+    if (!parsed) {
+      return NextResponse.json(
+        { error: "remindAt must be YYYY-MM-DDTHH:MM:00 local time" },
+        { status: 400 },
+      );
+    }
+    remindAt = parsed.normalized;
+  }
   const row = await db.addReminder({
     message: body.message,
-    remindAt: body.remindAt || null,
+    remindAt,
     frequency: (body.frequency as "once") || "once",
     fireTime: body.fireTime || null,
   });

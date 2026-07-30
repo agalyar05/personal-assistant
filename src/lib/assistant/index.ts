@@ -6,6 +6,11 @@ import { formatDueSummary } from "../assignments";
 import { extractLocationPhrase, resolvePlace } from "../location";
 import { formatWeatherText } from "../weather";
 import { calendar } from "../sms/gmail";
+import {
+  formatLocalDateTimeNice,
+  formatNowForPrompt,
+  parseLocalIsoInTimezone,
+} from "../zoned-time";
 
 const MODEL = "llama-3.3-70b-versatile";
 
@@ -287,12 +292,16 @@ const TOOLS: Groq.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "schedule_reminder",
-      description: "One-time SMS reminder. remind_at_iso is local datetime without Z.",
+      description:
+        "One-time SMS reminder. remind_at_iso MUST be the user's local wall time as YYYY-MM-DDTHH:MM:00 with NO Z/offset. Use Current local datetime from system context to resolve 'tomorrow', 'tonight', etc. Never schedule a time already in the past.",
       parameters: {
         type: "object",
         properties: {
           message: { type: "string" },
-          remind_at_iso: { type: "string" },
+          remind_at_iso: {
+            type: "string",
+            description: "Local datetime e.g. 2026-07-31T08:20:00",
+          },
         },
         required: ["message", "remind_at_iso"],
       },
@@ -418,14 +427,25 @@ async function runTool(
     }
     case "list_reminders":
       return lists.smsParts(await reminders.listRemindersParts());
-    case "schedule_reminder":
+    case "schedule_reminder": {
+      const settings = await db.getSettings();
+      const tz = settings.timezone || "America/Detroit";
+      const raw = String(args.remind_at_iso || "");
+      const parsed = parseLocalIsoInTimezone(raw, tz);
+      if (!parsed) {
+        return `Couldn't parse remind_at_iso '${raw}'. Use YYYY-MM-DDTHH:MM:00 in the user's local timezone (no Z). ${formatNowForPrompt(tz)}`;
+      }
+      if (parsed.utc.getTime() < Date.now() - 60_000) {
+        return `That time is already in the past (${parsed.normalized} ${tz}). ${formatNowForPrompt(tz)} Recalculate 'tomorrow'/relative times and call schedule_reminder again.`;
+      }
       await db.addReminder({
         message: String(args.message),
-        remindAt: String(args.remind_at_iso).replace(/Z$/, "").slice(0, 19),
+        remindAt: parsed.normalized,
         frequency: "once",
         fireTime: null,
       });
-      return `Success: reminder set for ${args.remind_at_iso}.`;
+      return `Success: reminder set for ${formatLocalDateTimeNice(parsed.utc, tz)} (${parsed.normalized} ${tz}).`;
+    }
     case "schedule_recurring_reminder":
       await db.addReminder({
         message: String(args.message),
@@ -564,15 +584,18 @@ export async function getReply(
   }
 
   const settings = await db.getSettings();
+  const tz = settings.timezone || "America/Detroit";
   const client = groq();
   const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
     {
       role: "system",
       content:
         SYSTEM_PROMPT +
-        `\n\nUser timezone: ${settings.timezone}` +
+        `\n\nUser timezone: ${tz}` +
+        `\n${formatNowForPrompt(tz)}` +
         `\nWeather city: ${settings.weatherCity}` +
-        `\nMorning briefing: ${settings.morningBriefingTime}`,
+        `\nMorning briefing: ${settings.morningBriefingTime}` +
+        `\nFor schedule_reminder, remind_at_iso is ALWAYS local wall time in ${tz} (YYYY-MM-DDTHH:MM:00, no Z).`,
     },
     ...history.slice(-12).map((h) => ({
       role: (h.role === "assistant" ? "assistant" : "user") as "assistant" | "user",
