@@ -88,6 +88,23 @@ export async function tryMessageShorthand(
   const text =
     findCommandLine(message) || shorthandText(message);
 
+  // "remind me to …" with no time → ask when (and stash for the follow-up).
+  const remindWhat = reminderWhatWithoutTime(text);
+  if (remindWhat !== null) {
+    await db.updateSettings({ pendingReminderMessage: remindWhat || text });
+    return askWhenToRemind(remindWhat);
+  }
+
+  // Follow-up after we asked when: "never mind" clears the pending draft.
+  const settingsEarly = await db.getSettings();
+  if (
+    settingsEarly.pendingReminderMessage &&
+    /^(never\s*mind|nvm|cancel|forget\s+it|don't)\b/i.test(text)
+  ) {
+    await db.updateSettings({ pendingReminderMessage: null });
+    return "Okay — I won't set that reminder.";
+  }
+
   if (/^quote\s*$/i.test(text)) {
     const day = Math.floor(Date.now() / 86400000);
     return `✨ Quote of the day:\n${QUOTES[day % QUOTES.length]}`;
@@ -201,10 +218,36 @@ VOICE / TONE:
 - Short, breathable sentences. No markdown.
 - Keep replies SHORT (1-3 sentences) unless listing calendar/lists.
 - For reminders use schedule_reminder / schedule_recurring_reminder — NOT create_calendar_event.
+- If the user wants a reminder but does NOT say when (no day/time like tomorrow, 8am, in 2 hours), do NOT call schedule_reminder. Ask: "When should I remind you to …?"
 - Only create_calendar_event when user explicitly asks to add to Google Calendar.
 - Lists use dot prefix (.groceries, .todo). Prefer tools for calendar, weather, lists, reminders.
 - When user says they moved / are in a new city (e.g. "I'm in Seattle now"), call set_location.
 - If you cannot do something, say so simply without forced emoji.`;
+
+/** Concrete timing — vague words like "later"/"soon" alone are NOT enough. */
+const REMINDER_TIME_CUE =
+  /\b(tomorrow|today|tonight|this\s+(morning|afternoon|evening|weekend)|next\s+(week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs|day|days|week|weeks)|at\s+\d{1,2}(?::\d{2})?\s*(am|pm)?|\d{1,2}:\d{2}\s*(am|pm)?|\d{1,2}\s*(am|pm)\b|noon|midnight|\d{1,2}\s*o'?clock)\b/i;
+
+function reminderWhatWithoutTime(text: string): string | null {
+  const t = text.trim();
+  if (!/\bremind\s+me\b/i.test(t)) return null;
+  if (/\b(cancel|delete|remove|list|show)\b/i.test(t) && /\bremind/i.test(t)) {
+    return null;
+  }
+  if (REMINDER_TIME_CUE.test(t)) return null;
+  const m = t.match(/\bremind\s+me\s+(.+)$/i);
+  const what = (m?.[1] || "").trim().replace(/[.?!]+$/, "");
+  return what || "";
+}
+
+function askWhenToRemind(what: string): string {
+  if (!what) return "When should I remind you?";
+  const clipped = what.length > 120 ? `${what.slice(0, 117)}…` : what;
+  if (/^(to|about|that|of)\b/i.test(clipped)) {
+    return `When should I remind you ${clipped}?`;
+  }
+  return `When should I remind you to ${clipped}?`;
+}
 
 const TOOLS: Groq.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -293,7 +336,7 @@ const TOOLS: Groq.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "schedule_reminder",
       description:
-        "One-time SMS reminder. remind_at_iso MUST be the user's local wall time as YYYY-MM-DDTHH:MM:00 with NO Z/offset. Use Current local datetime from system context to resolve 'tomorrow', 'tonight', etc. Never schedule a time already in the past.",
+        "One-time SMS reminder. ONLY call when the user gave a concrete day/time. remind_at_iso MUST be the user's local wall time as YYYY-MM-DDTHH:MM:00 with NO Z/offset. Use Current local datetime from system context to resolve 'tomorrow', 'tonight', etc. Never schedule a time already in the past. If they didn't say when, do not call this — ask when instead.",
       parameters: {
         type: "object",
         properties: {
@@ -444,6 +487,7 @@ async function runTool(
         frequency: "once",
         fireTime: null,
       });
+      await db.updateSettings({ pendingReminderMessage: null });
       return `Success: reminder set for ${formatLocalDateTimeNice(parsed.utc, tz)} (${parsed.normalized} ${tz}).`;
     }
     case "schedule_recurring_reminder":
@@ -453,6 +497,7 @@ async function runTool(
         frequency: String(args.frequency),
         fireTime: String(args.fire_time),
       });
+      await db.updateSettings({ pendingReminderMessage: null });
       return `Success: recurring reminder set (${args.frequency} at ${args.fire_time}).`;
     case "cancel_reminder": {
       const n = await db.deleteRemindersMatching(String(args.search_text));
@@ -585,6 +630,10 @@ export async function getReply(
 
   const settings = await db.getSettings();
   const tz = settings.timezone || "America/Detroit";
+  const pending = settings.pendingReminderMessage?.trim() || "";
+  const pendingHint = pending
+    ? `\nPending reminder waiting for a time: "${pending}". If this message is giving a day/time for it, call schedule_reminder with message exactly that pending text (or a clean version of it) and the resolved remind_at_iso. If they changed the topic to something else, ignore the pending reminder.`
+    : "";
   const client = groq();
   const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
     {
@@ -595,7 +644,8 @@ export async function getReply(
         `\n${formatNowForPrompt(tz)}` +
         `\nWeather city: ${settings.weatherCity}` +
         `\nMorning briefing: ${settings.morningBriefingTime}` +
-        `\nFor schedule_reminder, remind_at_iso is ALWAYS local wall time in ${tz} (YYYY-MM-DDTHH:MM:00, no Z).`,
+        `\nFor schedule_reminder, remind_at_iso is ALWAYS local wall time in ${tz} (YYYY-MM-DDTHH:MM:00, no Z).` +
+        pendingHint,
     },
     ...history.slice(-12).map((h) => ({
       role: (h.role === "assistant" ? "assistant" : "user") as "assistant" | "user",

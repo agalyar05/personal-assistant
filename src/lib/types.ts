@@ -77,6 +77,8 @@ export type AppSettings = {
   thinkingSheet: ThinkingSheetData;
   /** Show tasks due within this many days (overdue + undated always). 0 = all. Calendar ignores this. */
   taskHorizonDays: number;
+  /** Reminder text waiting for a time from the user (SMS follow-up). */
+  pendingReminderMessage: string | null;
 };
 
 export type AssignmentStatus =
@@ -251,6 +253,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     cells: {},
   },
   taskHorizonDays: 7,
+  pendingReminderMessage: null,
 };
 
 export const DEFAULT_STORE: Store = {
