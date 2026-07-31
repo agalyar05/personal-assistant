@@ -203,6 +203,8 @@ async function afterTodoChecked(item: { id: string } | null) {
   const { syncAssignmentFromTodoCheck } = await import("../masterlist-todo");
   await syncAssignmentFromTodoCheck(item.id, true);
 }
+
+async function setLocationFromPlace(place: string): Promise<string> {
   const resolved = await resolvePlace(place);
   if (!resolved) {
     return `Couldn't find "${place}" — try a city name like Seattle or Detroit.`;
