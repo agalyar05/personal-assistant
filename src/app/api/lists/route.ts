@@ -68,6 +68,12 @@ export async function POST(req: Request) {
       text: body.text,
       sortOrder: body.sortOrder,
     });
+    if (body.checked !== undefined && item) {
+      const { syncAssignmentFromTodoCheck } = await import(
+        "@/lib/masterlist-todo"
+      );
+      await syncAssignmentFromTodoCheck(body.id, Boolean(body.checked));
+    }
     return NextResponse.json({ item });
   }
   if (body.action === "remove" && body.id) {

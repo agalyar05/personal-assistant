@@ -76,6 +76,7 @@ export function applicationToSheetRow(
     link: app.url,
     sortOrder: 50_000 + (app.sortOrder || 0),
     dueReminderSentFor: null,
+    todoItemId: null,
     createdAt: app.createdAt,
   };
 }

@@ -485,6 +485,7 @@ function rowToAssignment(row: Record<string, unknown>): Assignment {
     dueReminderSentFor: row.due_reminder_sent_for
       ? String(row.due_reminder_sent_for)
       : null,
+    todoItemId: row.todo_item_id ? String(row.todo_item_id) : null,
     createdAt: String(row.created_at || new Date().toISOString()),
   };
 }
@@ -601,6 +602,9 @@ export async function upsertAssignment(
     if (input.dueReminderSentFor !== undefined) {
       body.due_reminder_sent_for = input.dueReminderSentFor;
     }
+    if (input.todoItemId !== undefined) {
+      body.todo_item_id = input.todoItemId;
+    }
     const { data, error } = await sb
       .from("assignments")
       .update(body)
@@ -629,6 +633,7 @@ export async function upsertAssignment(
     link: input.link ?? "",
     sort_order: input.sortOrder ?? 0,
     due_reminder_sent_for: input.dueReminderSentFor ?? null,
+    todo_item_id: input.todoItemId ?? null,
   };
   const { data, error } = await sb
     .from("assignments")

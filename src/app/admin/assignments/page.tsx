@@ -34,6 +34,7 @@ import {
   assignmentStatusToApp,
   isAppSheetId,
 } from "@/lib/app-sheet";
+import { faintClassTint } from "@/lib/themes";
 
 type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
@@ -260,6 +261,32 @@ export default function AssignmentsPage() {
       body: JSON.stringify({ action: "delete", id }),
     });
     setAssignments((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  async function toggleTodo(id: string, onTodo: boolean) {
+    if (isAppSheetId(id)) {
+      setMsg("Applications aren't added to .todo from here");
+      return;
+    }
+    const res = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "todo", id, onTodo }),
+    });
+    if (!res.ok) {
+      setMsg("Couldn't update .todo");
+      await load();
+      return;
+    }
+    const json = await res.json();
+    if (json.assignment) {
+      setAssignments((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, ...json.assignment } : a)),
+      );
+    } else {
+      await load();
+    }
+    setMsg(onTodo ? "Added to .todo" : "Removed from .todo");
   }
 
   async function addBlankRow() {
@@ -511,6 +538,7 @@ export default function AssignmentsPage() {
           onInsertRow={insertRowAt}
           onDelete={removeRow}
           onBulk={bulkSave}
+          onToggleTodo={toggleTodo}
           onMsg={setMsg}
         />
       )}
@@ -702,7 +730,12 @@ function AgendaView({
           return (
             <li
               key={a.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-white/70 px-3 py-2"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--line)] px-3 py-2"
+              style={{
+                backgroundColor: c?.color
+                  ? faintClassTint(c.color, 0.16)
+                  : "rgba(255,255,255,0.7)",
+              }}
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -1106,10 +1139,18 @@ function CalendarView({
                   setDragIds([]);
                   setOverYmd(null);
                 }}
-                className={`cursor-grab truncate rounded px-1.5 py-1 text-[11px] text-white active:cursor-grabbing ${
+                className={`cursor-grab truncate rounded px-1.5 py-1 text-[11px] active:cursor-grabbing ${
                   isDragging ? "opacity-40" : ""
-                } ${isSel ? "ring-2 ring-white ring-offset-1 ring-offset-black/20" : ""}`}
-                style={{ background: c?.color || "var(--accent)" }}
+                } ${isSel ? "ring-2 ring-[var(--accent)] ring-offset-1" : ""}`}
+                style={{
+                  background: c?.color
+                    ? faintClassTint(c.color, 0.28)
+                    : faintClassTint("#0f766e", 0.2),
+                  color: "var(--ink)",
+                  boxShadow: c?.color
+                    ? `inset 3px 0 0 ${c.color}`
+                    : "inset 3px 0 0 var(--accent)",
+                }}
                 title={a.title}
               >
                 {a.title}
@@ -1123,8 +1164,12 @@ function CalendarView({
             <a
               key={app.id}
               href="/admin/applications"
-              className="block truncate rounded px-1.5 py-1 text-[11px] text-white no-underline opacity-95 hover:opacity-100"
-              style={{ background: applicationsColor }}
+              className="block truncate rounded px-1.5 py-1 text-[11px] no-underline opacity-95 hover:opacity-100"
+              style={{
+                background: faintClassTint(applicationsColor, 0.28),
+                color: "var(--ink)",
+                boxShadow: `inset 3px 0 0 ${applicationsColor}`,
+              }}
               title={`${app.kind}: ${app.title}`}
               onClick={(e) => e.stopPropagation()}
             >
@@ -1488,13 +1533,30 @@ function KanbanView({
                     }}
                     className={`cursor-grab rounded-lg border px-2 py-2 active:cursor-grabbing sm:rounded-xl sm:px-3 sm:py-2.5 ${
                       isSel
-                        ? "border-[var(--accent)] bg-[var(--accent-soft)]/60 ring-2 ring-[var(--accent)]"
-                        : "border-[var(--line)] bg-white/90"
+                        ? "border-[var(--accent)] ring-2 ring-[var(--accent)]"
+                        : "border-[var(--line)]"
                     } ${
                       isSubmittedStyle(a.status)
-                        ? "bg-stone-100 text-[var(--muted)] line-through opacity-70"
+                        ? "text-[var(--muted)] line-through opacity-70"
                         : ""
                     } ${isDragging ? "opacity-50" : ""}`}
+                    style={{
+                      backgroundColor: isSel
+                        ? undefined
+                        : (() => {
+                            const hex = a.courseId
+                              ? courses.find((c) => c.id === a.courseId)?.color
+                              : null;
+                            if (isSubmittedStyle(a.status)) {
+                              return hex
+                                ? faintClassTint(hex, 0.08)
+                                : "rgb(245 245 244)";
+                            }
+                            return hex
+                              ? faintClassTint(hex, 0.16)
+                              : "rgba(255,255,255,0.9)";
+                          })(),
+                    }}
                   >
                     <div className="flex items-start justify-between gap-1">
                       {isEditing ? (

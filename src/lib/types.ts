@@ -121,6 +121,8 @@ export type Assignment = {
   link: string;
   sortOrder: number;
   dueReminderSentFor: string | null;
+  /** Linked .todo list_items.id when added to .todo from Masterlist */
+  todoItemId: string | null;
   createdAt: string;
 };
 

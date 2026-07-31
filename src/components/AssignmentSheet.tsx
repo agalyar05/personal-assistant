@@ -34,6 +34,7 @@ export type ColKey =
   | "title"
   | "link"
   | "courseId"
+  | "todo"
   | "status"
   | "dueAt"
   | "assignmentType"
@@ -46,6 +47,7 @@ const COL_META: { key: ColKey; label: string; width: string }[] = [
   { key: "title", label: "Title", width: "min-w-[200px]" },
   { key: "link", label: "Link", width: "min-w-[160px]" },
   { key: "courseId", label: "Class", width: "min-w-[120px]" },
+  { key: "todo", label: ".todo", width: "min-w-[64px]" },
   { key: "status", label: "Progress", width: "min-w-[130px]" },
   { key: "dueAt", label: "Due", width: "min-w-[130px]" },
   { key: "assignmentType", label: "Type", width: "min-w-[110px]" },
@@ -97,6 +99,7 @@ export function AssignmentSheet({
   onInsertRow,
   onDelete,
   onBulk,
+  onToggleTodo,
   onMsg,
 }: {
   assignments: Assignment[];
@@ -112,6 +115,7 @@ export function AssignmentSheet({
   onBulk: (
     rows: (Partial<Assignment> & { title?: string; id?: string })[],
   ) => Promise<void>;
+  onToggleTodo: (id: string, onTodo: boolean) => Promise<void>;
   onMsg: (msg: string) => void;
 }) {
   const [cols, setCols] = useState<ColKey[]>(() => COL_META.map((c) => c.key));
@@ -131,6 +135,12 @@ export function AssignmentSheet({
   } | null>(null);
   const [sort, setSort] = useState<SortState | null>(null);
   const fillStartRef = useRef<CellPos | null>(null);
+  const fillSourceRef = useRef<{
+    r0: number;
+    r1: number;
+    c0: number;
+    c1: number;
+  } | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const inputRefs = useRef<Map<string, HTMLInputElement | HTMLSelectElement>>(
     new Map(),
@@ -218,6 +228,8 @@ export function AssignmentSheet({
         return a.link;
       case "courseId":
         return a.courseId || "";
+      case "todo":
+        return a.todoItemId ? "1" : "";
       case "status":
         return a.status;
       case "dueAt":
@@ -239,6 +251,7 @@ export function AssignmentSheet({
     if (col === "courseId") {
       return a.courseId ? courseLabel.get(a.courseId) || "" : "";
     }
+    if (col === "todo") return a.todoItemId ? "✓" : "";
     if (col === "status") return STATUS_LABEL[a.status] || a.status;
     return getRaw(a, col);
   }
@@ -261,6 +274,8 @@ export function AssignmentSheet({
         );
         return { courseId: byName?.id || null };
       }
+      case "todo":
+        return {};
       case "status": {
         const match = ASSIGNMENT_STATUSES.find(
           (s) =>
@@ -334,51 +349,101 @@ export function AssignmentSheet({
     endRow: number,
     colIndex: number,
   ) {
-    const col = cols[colIndex]!;
-    const seed = rows[start.row];
-    if (!seed) return;
-    const count = Math.abs(endRow - start.row) + 1;
-    const top = Math.min(start.row, endRow);
-    const patchRows: (Partial<Assignment> & { title?: string; id?: string })[] =
-      [];
+    // Legacy single-column path — prefer applyFillFromSelection.
+    const source = {
+      r0: start.row,
+      r1: start.row,
+      c0: colIndex,
+      c1: colIndex,
+    };
+    await applyFillFromSelection(source, endRow);
+  }
 
-    if (col === "title") {
-      const titles = fillTitleSeries(seed.title, count);
-      for (let i = 0; i < count; i++) {
-        const row = rows[top + i];
-        if (row) patchRows.push({ id: row.id, title: titles[i]! });
+  /** Spreadsheet-style fill: extend selection downward into new rows. */
+  async function applyFillFromSelection(
+    source: { r0: number; r1: number; c0: number; c1: number },
+    endRow: number,
+  ) {
+    if (endRow <= source.r1) {
+      onMsg("Drag the fill handle below the selection");
+      return;
+    }
+    const srcH = source.r1 - source.r0 + 1;
+    const destCount = endRow - source.r1;
+    const byId = new Map<
+      string,
+      Partial<Assignment> & { id: string; title?: string }
+    >();
+
+    function merge(
+      id: string,
+      title: string,
+      patch: Partial<Assignment>,
+    ) {
+      const prev = byId.get(id) || { id, title };
+      byId.set(id, { ...prev, ...patch, id, title: patch.title ?? prev.title });
+    }
+
+    for (let c = source.c0; c <= source.c1; c++) {
+      const col = cols[c];
+      if (!col || col === "todo") continue;
+      const srcRows: Assignment[] = [];
+      for (let r = source.r0; r <= source.r1; r++) {
+        const row = rows[r];
+        if (row) srcRows.push(row);
       }
-    } else if (col === "dueAt") {
-      const next = rows[start.row + 1];
-      const dates = fillDateSeries(
-        [toInputDate(seed.dueAt), toInputDate(next?.dueAt || null)],
-        count,
-        fillMode,
-      );
-      for (let i = 0; i < count; i++) {
-        const row = rows[top + i];
-        if (row) {
-          patchRows.push({
-            id: row.id,
-            dueAt: fromInputDate(dates[i] || ""),
-          });
+      if (!srcRows.length) continue;
+
+      if (col === "title") {
+        const titles = fillTitleSeries(
+          srcRows[0]!.title,
+          srcH + destCount,
+        );
+        for (let i = 0; i < destCount; i++) {
+          const row = rows[source.r1 + 1 + i];
+          if (row) merge(row.id, row.title, { title: titles[srcH + i]! });
         }
-      }
-    } else {
-      const value = seed[col];
-      for (let i = 0; i < count; i++) {
-        const row = rows[top + i];
-        if (row) {
-          patchRows.push({
-            id: row.id,
-            ...({ [col]: value } as Partial<Assignment>),
-          });
+      } else if (col === "dueAt") {
+        const seeds = srcRows.map((r) => toInputDate(r.dueAt));
+        const dates = fillDateSeries(seeds, srcH + destCount, fillMode);
+        for (let i = 0; i < destCount; i++) {
+          const row = rows[source.r1 + 1 + i];
+          if (row) {
+            merge(row.id, row.title, {
+              dueAt: fromInputDate(dates[srcH + i] || ""),
+            });
+          }
+        }
+      } else {
+        for (let i = 0; i < destCount; i++) {
+          const src = srcRows[i % srcRows.length]!;
+          const row = rows[source.r1 + 1 + i];
+          if (!row) continue;
+          if (col === "courseId") {
+            merge(row.id, row.title, { courseId: src.courseId });
+          } else if (col === "status") {
+            merge(row.id, row.title, { status: src.status });
+          } else if (col === "assignmentType") {
+            merge(row.id, row.title, { assignmentType: src.assignmentType });
+          } else if (col === "difficulty") {
+            merge(row.id, row.title, { difficulty: src.difficulty });
+          } else if (col === "pointsEarned") {
+            merge(row.id, row.title, { pointsEarned: src.pointsEarned });
+          } else if (col === "pointsPossible") {
+            merge(row.id, row.title, { pointsPossible: src.pointsPossible });
+          } else if (col === "notes") {
+            merge(row.id, row.title, { notes: src.notes });
+          } else if (col === "link") {
+            merge(row.id, row.title, { link: src.link });
+          }
         }
       }
     }
+
+    const patchRows = [...byId.values()];
     if (patchRows.length) {
       await onBulk(patchRows);
-      onMsg(`Filled ${patchRows.length} cells`);
+      onMsg(`Filled ${destCount} row(s)`);
     }
   }
 
@@ -444,9 +509,23 @@ export function AssignmentSheet({
         }
       }
     } else {
+      if (col === "todo") {
+        onMsg("Use the .todo checkbox on each row");
+        return;
+      }
       for (let i = 0; i < count; i++) {
         const existing = rows[active.row + i];
-        const patch = { [col]: seed[col] } as Partial<Assignment>;
+        const patch: Partial<Assignment> = {};
+        if (col === "courseId") patch.courseId = seed.courseId;
+        else if (col === "status") patch.status = seed.status;
+        else if (col === "link") patch.link = seed.link;
+        else if (col === "assignmentType")
+          patch.assignmentType = seed.assignmentType;
+        else if (col === "difficulty") patch.difficulty = seed.difficulty;
+        else if (col === "pointsEarned") patch.pointsEarned = seed.pointsEarned;
+        else if (col === "pointsPossible")
+          patch.pointsPossible = seed.pointsPossible;
+        else if (col === "notes") patch.notes = seed.notes;
         if (existing) patchRows.push({ id: existing.id, ...patch });
         else {
           patchRows.push({
@@ -476,8 +555,20 @@ export function AssignmentSheet({
     const above = rows[active.row - 1];
     const cur = rows[active.row];
     const col = cols[active.col]!;
-    if (!above || !cur) return;
-    const patch = { [col]: above[col] } as Partial<Assignment>;
+    if (!above || !cur || col === "todo") return;
+    const patch: Partial<Assignment> = {};
+    if (col === "title") patch.title = above.title;
+    else if (col === "courseId") patch.courseId = above.courseId;
+    else if (col === "status") patch.status = above.status;
+    else if (col === "link") patch.link = above.link;
+    else if (col === "dueAt") patch.dueAt = above.dueAt;
+    else if (col === "assignmentType")
+      patch.assignmentType = above.assignmentType;
+    else if (col === "difficulty") patch.difficulty = above.difficulty;
+    else if (col === "pointsEarned") patch.pointsEarned = above.pointsEarned;
+    else if (col === "pointsPossible")
+      patch.pointsPossible = above.pointsPossible;
+    else if (col === "notes") patch.notes = above.notes;
     await onPatch({ id: cur.id, ...patch });
   }
 
@@ -652,12 +743,21 @@ export function AssignmentSheet({
   useEffect(() => {
     if (!fillDragging && !rangeDragging) return;
     function up() {
+      if (fillDragging && fillSourceRef.current && active) {
+        const src = fillSourceRef.current;
+        if (active.row > src.r1) {
+          void applyFillFromSelection(src, active.row);
+        }
+      }
+      fillSourceRef.current = null;
+      fillStartRef.current = null;
       setFillDragging(false);
       setRangeDragging(false);
     }
     window.addEventListener("mouseup", up);
     return () => window.removeEventListener("mouseup", up);
-  }, [fillDragging, rangeDragging]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fillDragging, rangeDragging, active]);
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -837,6 +937,28 @@ export function AssignmentSheet({
             </option>
           ))}
         </select>
+      );
+    }
+
+    if (col === "todo") {
+      return (
+        <div className="flex min-h-[1.75rem] items-center justify-center">
+          <input
+            type="checkbox"
+            className="h-4 w-4 cursor-pointer accent-[var(--accent)]"
+            checked={Boolean(a.todoItemId)}
+            title={
+              a.todoItemId
+                ? "On .todo — uncheck to remove"
+                : "Add to .todo"
+            }
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              void onToggleTodo(a.id, e.target.checked);
+            }}
+          />
+        </div>
       );
     }
 
@@ -1022,7 +1144,7 @@ export function AssignmentSheet({
           Fill down
         </button>
         <span className="hidden text-xs text-[var(--muted)] lg:inline">
-          Click Class / Due / Progress to sort · drag headers to move columns
+          Drag ▢ corner to fill · click Class / Due / Progress to sort
         </span>
       </div>
 
@@ -1156,11 +1278,10 @@ export function AssignmentSheet({
                       col: selection.c1,
                     });
                   const showHandle =
-                    isActive &&
                     !editing &&
                     selection &&
-                    selection.r0 === selection.r1 &&
-                    selection.c0 === selection.c1;
+                    rowIdx === selection.r1 &&
+                    colIdx === selection.c1;
 
                   return (
                     <td
@@ -1194,13 +1315,17 @@ export function AssignmentSheet({
                         setRangeDragging(true);
                       }}
                       onDoubleClick={() => {
+                        if (col === "todo" || col === "courseId") return;
                         selectCell(pos, { edit: true });
                       }}
                       onMouseEnter={() => {
-                        if (fillDragging && fillStartRef.current) {
-                          const start = fillStartRef.current;
-                          setAnchor(start);
-                          setActive({ row: rowIdx, col: start.col });
+                        if (fillDragging && fillSourceRef.current) {
+                          const src = fillSourceRef.current;
+                          setAnchor({ row: src.r0, col: src.c0 });
+                          setActive({
+                            row: Math.max(src.r1, rowIdx),
+                            col: src.c1,
+                          });
                           return;
                         }
                         if (rangeDragging && anchor) {
@@ -1208,13 +1333,17 @@ export function AssignmentSheet({
                         }
                       }}
                       onMouseUp={() => {
-                        if (fillDragging && fillStartRef.current) {
-                          const start = fillStartRef.current;
+                        if (fillDragging && fillSourceRef.current) {
+                          const src = fillSourceRef.current;
                           setFillDragging(false);
+                          fillSourceRef.current = null;
                           fillStartRef.current = null;
-                          void applyFillRange(start, rowIdx, start.col);
-                          setAnchor(start);
-                          setActive({ row: rowIdx, col: start.col });
+                          void applyFillFromSelection(src, rowIdx);
+                          setAnchor({ row: src.r0, col: src.c0 });
+                          setActive({
+                            row: Math.max(src.r1, rowIdx),
+                            col: src.c1,
+                          });
                         }
                         setRangeDragging(false);
                       }}
@@ -1226,14 +1355,16 @@ export function AssignmentSheet({
                           onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
+                            if (!selection) return;
                             setRangeDragging(false);
-                            if (active) {
-                              fillStartRef.current = active;
-                              setAnchor(active);
-                            }
+                            fillSourceRef.current = { ...selection };
+                            fillStartRef.current = {
+                              row: selection.r1,
+                              col: selection.c1,
+                            };
                             setFillDragging(true);
                           }}
-                          title="Drag to fill"
+                          title="Drag down to fill"
                         />
                       )}
                     </td>

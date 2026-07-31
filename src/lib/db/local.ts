@@ -474,6 +474,7 @@ export async function upsertAssignment(
       input.sortOrder ??
       store.assignments.reduce((m, a) => Math.max(m, a.sortOrder), 0) + 1,
     dueReminderSentFor: input.dueReminderSentFor ?? null,
+    todoItemId: input.todoItemId ?? null,
     createdAt: new Date().toISOString(),
   };
   store.assignments.push(row);

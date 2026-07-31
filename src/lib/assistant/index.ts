@@ -165,6 +165,7 @@ export async function tryMessageShorthand(
   if (done) {
     const listName = lists.normalizeListName(done[2] || lists.DEFAULT_GROCERY);
     const item = await db.checkOffListItem(listName, done[1].trim());
+    await afterTodoChecked(item);
     return item
       ? `Checked off ${item.text} from .${listName} ✓`
       : `Couldn't find that item on '.${listName}'.`;
@@ -173,6 +174,7 @@ export async function tryMessageShorthand(
   if (dash) {
     const listName = lists.DEFAULT_GROCERY;
     const item = await db.checkOffListItem(listName, dash[1].trim());
+    await afterTodoChecked(item);
     return item
       ? `Checked off ${item.text} from .${listName} ✓`
       : `Couldn't find that item on '.${listName}'.`;
@@ -196,7 +198,11 @@ async function addToListReply(listName: string, items: string[]) {
   return lists.addToList(listName, items);
 }
 
-async function setLocationFromPlace(place: string): Promise<string> {
+async function afterTodoChecked(item: { id: string } | null) {
+  if (!item) return;
+  const { syncAssignmentFromTodoCheck } = await import("../masterlist-todo");
+  await syncAssignmentFromTodoCheck(item.id, true);
+}
   const resolved = await resolvePlace(place);
   if (!resolved) {
     return `Couldn't find "${place}" — try a city name like Seattle or Detroit.`;
@@ -458,6 +464,7 @@ async function runTool(
         n,
         String(args.item_or_index || ""),
       );
+      await afterTodoChecked(item);
       return item
         ? `Checked off ${item.text} from .${n} ✓`
         : `Couldn't find that item on '.${n}'.`;
