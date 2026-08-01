@@ -78,6 +78,30 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, n));
 }
 
+/** Canonical `#rrggbb` lowercase, or "" if invalid. */
+export function normalizeHex(hex: string): string {
+  const raw = String(hex || "")
+    .replace("#", "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return "";
+  const full =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : raw.padEnd(6, "0").slice(0, 6);
+  if (!/^[0-9a-f]{6}$/.test(full)) return "";
+  return `#${full}`;
+}
+
+export function hexesEqual(a: string, b: string): boolean {
+  const na = normalizeHex(a);
+  const nb = normalizeHex(b);
+  return Boolean(na && nb && na === nb);
+}
+
 function hexToHsl(hex: string): { h: number; s: number; l: number } {
   const raw = hex.replace("#", "").trim();
   const full =
@@ -148,36 +172,200 @@ const THEME_HUE_BAND: Record<ThemeId, { start: number; span: number }> = {
   custom: { start: 160, span: 130 },
 };
 
+type HueBand = { start: number; span: number };
+
+function themeHueBand(theme: UiThemeSettings): HueBand {
+  if (theme.id === "custom") {
+    const accent = hexToHsl(resolveThemeColors(theme).accent);
+    return {
+      start: ((accent.h || 160) - 50 + 360) % 360,
+      span: 130,
+    };
+  }
+  return THEME_HUE_BAND[theme.id] || THEME_HUE_BAND.harbor;
+}
+
+function mutedChipParams(theme: UiThemeSettings): { sat: number; lit: number } {
+  const accent = hexToHsl(resolveThemeColors(theme).accent);
+  return {
+    sat: clamp((accent.s || 40) * 0.55, 22, 38),
+    lit: clamp(Math.max(accent.l || 40, 44), 42, 56),
+  };
+}
+
+/** Position of a hue along the theme band [0, span]. */
+function bandPosition(h: number, band: HueBand): number {
+  const d = (h - band.start + 360) % 360;
+  // Outside the band → clamp to nearest end
+  if (d > band.span) {
+    const pastEnd = d - band.span;
+    const beforeStart = 360 - d;
+    return pastEnd <= beforeStart ? band.span : 0;
+  }
+  return d;
+}
+
+function chipAtBandPos(
+  theme: UiThemeSettings,
+  pos: number,
+  seed: number,
+): string {
+  const band = themeHueBand(theme);
+  const { sat, lit } = mutedChipParams(theme);
+  const p = clamp(pos, 0, band.span);
+  const h = (band.start + p) % 360;
+  const l = clamp(lit + (seed % 3) * 4 - 4, 38, 58);
+  const s = clamp(sat + (seed % 2) * 5, 20, 42);
+  return hslToHex(h, s, l);
+}
+
 /**
- * Build `count` muted, theme-fitting chip colors that stay distinguishable.
+ * Next class color: expand from either end of the hues already in use
+ * (within the theme band). Never reshuffles existing colors.
+ */
+export function nextUnusedClassColor(
+  theme: UiThemeSettings,
+  usedHexes: string[],
+): string {
+  const band = themeHueBand(theme);
+  const usedNorm = [
+    ...new Set(
+      usedHexes.map(normalizeHex).filter(Boolean) as string[],
+    ),
+  ];
+
+  if (!usedNorm.length) {
+    return chipAtBandPos(theme, band.span * 0.5, 0);
+  }
+
+  const positions = usedNorm
+    .map((hex) => bandPosition(hexToHsl(hex).h, band))
+    .sort((a, b) => a - b);
+  const minP = positions[0]!;
+  const maxP = positions[positions.length - 1]!;
+
+  // Keep neighbors distinguishable as the set grows.
+  const minGap = Math.max(14, band.span / Math.max(7, usedNorm.length + 2));
+
+  const candidates: number[] = [];
+  // Prefer expanding the current span at either end.
+  candidates.push(minP - minGap);
+  candidates.push(maxP + minGap);
+  // Snap to band edges when close.
+  if (minP > 4) candidates.push(0);
+  if (maxP < band.span - 4) candidates.push(band.span);
+  // Largest interior gaps (fallback when ends are packed).
+  for (let i = 0; i < positions.length - 1; i++) {
+    const lo = positions[i]!;
+    const hi = positions[i + 1]!;
+    if (hi - lo >= minGap * 1.6) {
+      candidates.push((lo + hi) / 2);
+    }
+  }
+  // Dense fill: sample the band.
+  for (let i = 0; i <= 12; i++) {
+    candidates.push((band.span * i) / 12);
+  }
+
+  function minDist(p: number): number {
+    const cp = clamp(p, 0, band.span);
+    return Math.min(...positions.map((x) => Math.abs(x - cp)));
+  }
+
+  let bestPos = band.span * 0.5;
+  let bestDist = -1;
+  for (const raw of candidates) {
+    const p = clamp(raw, 0, band.span);
+    const d = minDist(p);
+    // Prefer end expansion when tied: reward positions outside current [min,max].
+    const endBonus = p < minP - 0.5 || p > maxP + 0.5 ? 0.5 : 0;
+    const score = d + endBonus;
+    if (score > bestDist) {
+      bestDist = score;
+      bestPos = p;
+    }
+  }
+
+  let hex = chipAtBandPos(theme, bestPos, usedNorm.length);
+  // If we collided with a used hex (quantization), nudge along the band.
+  const usedSet = new Set(usedNorm);
+  if (usedSet.has(normalizeHex(hex))) {
+    for (const delta of [minGap, -minGap, minGap * 1.5, -minGap * 1.5, 8, -8]) {
+      const nudged = chipAtBandPos(
+        theme,
+        bestPos + delta,
+        usedNorm.length + 1,
+      );
+      if (!usedSet.has(normalizeHex(nudged))) {
+        hex = nudged;
+        break;
+      }
+    }
+  }
+  return hex;
+}
+
+/**
+ * Swatches for the Groups picker: every in-use color (so selection shows)
+ * plus a few unused suggestions grown from the ends — existing hues never move.
+ */
+export function classSwatchPalette(
+  theme: UiThemeSettings,
+  usedHexes: string[],
+  extraUnused = 4,
+): string[] {
+  const band = themeHueBand(theme);
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const raw of usedHexes) {
+    const n = normalizeHex(raw);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+
+  let working = [...out];
+  for (let i = 0; i < Math.max(0, extraUnused); i++) {
+    const next = nextUnusedClassColor(theme, working);
+    const n = normalizeHex(next);
+    if (!n || seen.has(n)) break;
+    seen.add(n);
+    working.push(n);
+    out.push(n);
+  }
+
+  return out.sort(
+    (a, b) =>
+      bandPosition(hexToHsl(a).h, band) - bandPosition(hexToHsl(b).h, band),
+  );
+}
+
+/**
+ * Build `count` muted chips by growing from the band center toward both ends.
+ * Index 0 is always the center; adding slots does not move earlier indices.
  */
 export function classPaletteForTheme(
   theme: UiThemeSettings,
   count: number,
 ): string[] {
   const n = Math.max(1, Math.floor(count));
-  const resolved = resolveThemeColors(theme);
-  const accent = hexToHsl(resolved.accent);
-  const band =
-    theme.id === "custom"
-      ? {
-          start: ((accent.h || 160) - 50 + 360) % 360,
-          span: 130,
-        }
-      : THEME_HUE_BAND[theme.id];
-
-  // Soft / dusty — readable as chips, not neon.
-  const satBase = clamp((accent.s || 40) * 0.55, 22, 38);
-  const litBase = clamp(Math.max(accent.l || 40, 44), 42, 56);
-
+  const band = themeHueBand(theme);
   const out: string[] = [];
+  // Center first, then alternate low/high expansion (stable under growth).
   for (let i = 0; i < n; i++) {
-    const t = n === 1 ? 0.5 : i / (n - 1);
-    const h = (band.start + t * band.span) % 360;
-    // Stagger lightness so neighbors stay distinct even when hues are close.
-    const l = clamp(litBase + (i % 3) * 4 - 4, 38, 58);
-    const s = clamp(satBase + (i % 2) * 5, 20, 42);
-    out.push(hslToHex(h, s, l));
+    let pos: number;
+    if (i === 0) {
+      pos = band.span * 0.5;
+    } else {
+      const step = band.span / (2 * Math.ceil(i / 2) + 2);
+      const k = Math.ceil(i / 2);
+      pos =
+        i % 2 === 1
+          ? band.span * 0.5 - k * step
+          : band.span * 0.5 + k * step;
+    }
+    out.push(chipAtBandPos(theme, pos, i));
   }
   return out;
 }
@@ -199,25 +387,10 @@ export function faintClassTint(hex: string, alpha = 0.14): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** @deprecated Prefer classPaletteForTheme — kept for any stray callers. */
+/** @deprecated Prefer classSwatchPalette / classPaletteForTheme. */
 export function classColorsForTheme(themeId: ThemeId) {
-  return classPaletteForTheme({ id: themeId, custom: DEFAULT_THEME_CUSTOM }, 10).map(
-    (hex, i) => ({ hex, label: `Color ${i + 1}` }),
-  );
-}
-
-export function nextUnusedClassColor(
-  theme: UiThemeSettings,
-  usedHexes: string[],
-  minSlots = 8,
-): string {
-  const used = new Set(usedHexes.map((h) => h.toLowerCase()));
-  const palette = classPaletteForTheme(
-    theme,
-    Math.max(minSlots, usedHexes.length + 1),
-  );
-  return (
-    palette.find((hex) => !used.has(hex.toLowerCase())) ||
-    palette[usedHexes.length % palette.length]!
-  );
+  return classPaletteForTheme(
+    { id: themeId, custom: DEFAULT_THEME_CUSTOM },
+    10,
+  ).map((hex, i) => ({ hex, label: `Color ${i + 1}` }));
 }

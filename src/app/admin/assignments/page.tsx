@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   Application,
@@ -16,7 +17,6 @@ import {
   isClosedAssignmentStatus,
   isSubmittedStyle,
 } from "@/lib/types";
-import { AssignmentSheet } from "@/components/AssignmentSheet";
 import { CelebrationBurst } from "@/components/CelebrationBurst";
 import { dueDateParts, formatDueDate, withinTaskHorizon } from "@/lib/fill";
 import {
@@ -35,6 +35,19 @@ import {
   isAppSheetId,
 } from "@/lib/app-sheet";
 import { faintClassTint } from "@/lib/themes";
+
+const AssignmentSheet = dynamic(
+  () =>
+    import("@/components/AssignmentSheet").then((m) => ({
+      default: m.AssignmentSheet,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <p className="text-sm text-[var(--muted)]">Loading sheet…</p>
+    ),
+  },
+);
 
 type View = "sheet" | "calendar" | "kanban" | "agenda" | "progress";
 type KanbanBy = "status" | "class" | "difficulty";
@@ -96,7 +109,7 @@ export default function AssignmentsPage() {
     const [aRes, appRes, sRes] = await Promise.all([
       fetch("/api/assignments"),
       fetch("/api/applications"),
-      fetch("/api/settings"),
+      fetch("/api/settings?slim=1"),
     ]);
     const json = await aRes.json();
     setAssignments(
@@ -113,6 +126,26 @@ export default function AssignmentsPage() {
     if (sRes.ok) {
       const sJson = await sRes.json();
       setTaskHorizonDays(Number(sJson.settings?.taskHorizonDays ?? 7));
+    }
+  }, []);
+
+  /** Refresh rows without re-fetching settings (avoids Thinking sheet payload). */
+  const refreshRows = useCallback(async () => {
+    const [aRes, appRes] = await Promise.all([
+      fetch("/api/assignments"),
+      fetch("/api/applications"),
+    ]);
+    const json = await aRes.json();
+    setAssignments(
+      (json.assignments || []).map((a: Assignment) => ({
+        ...a,
+        link: a.link || "",
+      })),
+    );
+    setCourses(json.courses || []);
+    if (appRes.ok) {
+      const appJson = await appRes.json();
+      setApplications(appJson.applications || []);
     }
   }, []);
 
@@ -170,18 +203,16 @@ export default function AssignmentsPage() {
     [openApps, taskHorizonDays],
   );
 
-  /** Assignments + applications as sheet/kanban rows. */
+  /** Assignments + applications as sheet/kanban rows (manual sortOrder wins). */
   const sheetRows = useMemo(() => {
     const appsCourseId = applicationsGroup?.id || null;
     const appRows = horizonApps.map((a) =>
       applicationToSheetRow(a, appsCourseId),
     );
-    return [...horizonAssignments, ...appRows].sort((a, b) => {
-      const ad = a.dueAt || "9999";
-      const bd = b.dueAt || "9999";
-      if (ad !== bd) return ad.localeCompare(bd);
-      return a.sortOrder - b.sortOrder || a.title.localeCompare(b.title);
-    });
+    return [...horizonAssignments, ...appRows].sort(
+      (a, b) =>
+        a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
+    );
   }, [horizonAssignments, horizonApps, applicationsGroup?.id]);
 
   async function patchApplicationFromSheet(
@@ -200,6 +231,7 @@ export default function AssignmentsPage() {
       body.kind = patch.assignmentType as ApplicationKind;
     }
     if (patch.notes !== undefined) body.notes = patch.notes;
+    if (patch.sortOrder !== undefined) body.sortOrder = patch.sortOrder;
     if (patch.status !== undefined) {
       body.status = assignmentStatusToApp(
         patch.status,
@@ -214,10 +246,17 @@ export default function AssignmentsPage() {
     });
     if (!res.ok) {
       setMsg("Application save failed");
-      await load();
+      await refreshRows();
       return;
     }
-    await load();
+    const json = await res.json();
+    if (Array.isArray(json.applications)) {
+      setApplications(json.applications);
+    } else if (json.application) {
+      setApplications((prev) =>
+        prev.map((a) => (a.id === json.application.id ? json.application : a)),
+      );
+    }
   }
 
   async function patchAssignment(patch: Partial<Assignment> & { id: string }) {
@@ -236,7 +275,7 @@ export default function AssignmentsPage() {
     });
     if (!res.ok) {
       setMsg("Save failed — reloading");
-      await load();
+      await refreshRows();
       return;
     }
     if (patch.status === "submitted" && prev?.status !== "submitted") {
@@ -275,7 +314,7 @@ export default function AssignmentsPage() {
     });
     if (!res.ok) {
       setMsg("Couldn't update .todo");
-      await load();
+      await refreshRows();
       return;
     }
     const json = await res.json();
@@ -284,7 +323,7 @@ export default function AssignmentsPage() {
         prev.map((a) => (a.id === id ? { ...a, ...json.assignment } : a)),
       );
     } else {
-      await load();
+      await refreshRows();
     }
     setMsg(onTodo ? "Added to .todo" : "Removed from .todo");
   }
@@ -306,8 +345,13 @@ export default function AssignmentsPage() {
       setMsg("Could not add row");
       return;
     }
+    const created = (await res.json()).assignment as Assignment | undefined;
+    if (created?.id) {
+      setAssignments((prev) => [...prev, { ...created, link: created.link || "" }]);
+    } else {
+      await refreshRows();
+    }
     setMsg("Row added");
-    await load();
   }
 
   async function insertRowAt(index: number, where: "above" | "below") {
@@ -352,7 +396,7 @@ export default function AssignmentsPage() {
     }
     const created = (await res.json()).assignment as Assignment | undefined;
     if (!created?.id) {
-      await load();
+      await refreshRows();
       return;
     }
     const next = [...ordered];
@@ -390,8 +434,13 @@ export default function AssignmentsPage() {
       setMsg("Could not add card");
       return;
     }
+    const created = (await res.json()).assignment as Assignment | undefined;
+    if (created?.id) {
+      setAssignments((prev) => [...prev, { ...created, link: created.link || "" }]);
+    } else {
+      await refreshRows();
+    }
     setMsg("Card added");
-    await load();
   }
 
   function saveDefaultView(v: View) {
@@ -406,6 +455,7 @@ export default function AssignmentsPage() {
 
   async function bulkSave(
     rows: (Partial<Assignment> & { title?: string; id?: string })[],
+    opts?: { keepLocal?: boolean },
   ) {
     const appRows = rows.filter((r) => r.id && isAppSheetId(r.id));
     const asnRows = rows.filter((r) => !r.id || !isAppSheetId(r.id));
@@ -416,13 +466,41 @@ export default function AssignmentsPage() {
       );
     }
     if (asnRows.length) {
-      await fetch("/api/assignments", {
+      const res = await fetch("/api/assignments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "bulk", rows: asnRows }),
       });
+      if (!res.ok) {
+        setMsg("Save failed — reloading");
+        await refreshRows();
+        return;
+      }
+      // Reorder/sort already applied optimistically — don't clobber with a
+      // partial server list (that flicker: new order → old → new).
+      if (opts?.keepLocal) return;
+      const json = await res.json();
+      if (Array.isArray(json.assignments)) {
+        const byId = new Map(
+          (json.assignments as Assignment[]).map((a) => [a.id, a]),
+        );
+        setAssignments((prev) => {
+          const merged = prev.map((a) => {
+            const u = byId.get(a.id);
+            return u ? { ...a, ...u, link: u.link || a.link || "" } : a;
+          });
+          for (const u of json.assignments as Assignment[]) {
+            if (!byId.has(u.id)) continue;
+            if (!prev.some((a) => a.id === u.id)) {
+              merged.push({ ...u, link: u.link || "" });
+            }
+          }
+          return merged;
+        });
+        return;
+      }
     }
-    await load();
+    if (!opts?.keepLocal) await refreshRows();
   }
 
   const views: [View, string][] = [
@@ -524,6 +602,9 @@ export default function AssignmentsPage() {
                   if (patch.status !== undefined) {
                     next.status = assignmentStatusToApp(patch.status, a.status);
                   }
+                  if (patch.sortOrder !== undefined) {
+                    next.sortOrder = patch.sortOrder;
+                  }
                   return next;
                 }),
               );
@@ -531,6 +612,22 @@ export default function AssignmentsPage() {
             }
             setAssignments((prev) =>
               prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+            );
+          }}
+          onApplySortOrders={(orders) => {
+            const byId = new Map(orders.map((o) => [o.id, o.sortOrder]));
+            setAssignments((prev) =>
+              prev.map((a) =>
+                byId.has(a.id) ? { ...a, sortOrder: byId.get(a.id)! } : a,
+              ),
+            );
+            setApplications((prev) =>
+              prev.map((a) => {
+                const key = `app:${a.id}`;
+                return byId.has(key)
+                  ? { ...a, sortOrder: byId.get(key)! }
+                  : a;
+              }),
             );
           }}
           onPatch={patchAssignment}
@@ -958,6 +1055,31 @@ function CalendarView({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelected, setLastSelected] = useState<string | null>(null);
 
+  const assignmentsByYmd = useMemo(() => {
+    const map = new Map<string, Assignment[]>();
+    for (const a of assignments) {
+      if (!a.dueAt || isClosedAssignmentStatus(a.status)) continue;
+      const p = dueDateParts(a.dueAt);
+      if (!p) continue;
+      const key = `${p.year}-${String(p.month + 1).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+      const list = map.get(key);
+      if (list) list.push(a);
+      else map.set(key, [a]);
+    }
+    return map;
+  }, [assignments]);
+
+  const appsByYmd = useMemo(() => {
+    const map = new Map<string, Application[]>();
+    for (const a of applications) {
+      if (!a.deadline) continue;
+      const list = map.get(a.deadline);
+      if (list) list.push(a);
+      else map.set(a.deadline, [a]);
+    }
+    return map;
+  }, [applications]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setSelected(new Set());
@@ -967,17 +1089,11 @@ function CalendarView({
   }, []);
 
   function assignmentsForYmd(ymd: string) {
-    return assignments.filter((a) => {
-      if (!a.dueAt || isClosedAssignmentStatus(a.status)) return false;
-      const p = dueDateParts(a.dueAt);
-      if (!p) return false;
-      const key = `${p.year}-${String(p.month + 1).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
-      return key === ymd;
-    });
+    return assignmentsByYmd.get(ymd) || [];
   }
 
   function appsForYmd(ymd: string) {
-    return applications.filter((a) => a.deadline === ymd);
+    return appsByYmd.get(ymd) || [];
   }
 
   function selectCard(

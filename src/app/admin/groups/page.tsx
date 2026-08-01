@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Course, CourseLink } from "@/lib/types";
 import { isApplicationsGroup } from "@/lib/courses";
 import {
-  classPaletteForTheme,
+  classSwatchPalette,
+  hexesEqual,
   nextUnusedClassColor,
 } from "@/lib/themes";
 import { useUiTheme } from "@/components/ThemePicker";
@@ -36,9 +37,14 @@ export default function GroupsPage() {
     links: emptyLinks() as CourseLink[],
   });
 
+  const usedColors = useMemo(
+    () => courses.map((c) => c.color).filter(Boolean),
+    [courses],
+  );
+
   const palette = useMemo(
-    () => classPaletteForTheme(theme, Math.max(courses.length, 1)),
-    [theme, courses.length],
+    () => classSwatchPalette(theme, usedColors, 4),
+    [theme, usedColors],
   );
 
   const load = useCallback(async () => {
@@ -150,9 +156,10 @@ export default function GroupsPage() {
       <section className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
         <h2 className="display text-2xl">Groups</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Classes and color chips used across Masterlist. New classes get an
-          unused theme color automatically — tap a swatch on a class to change
-          it. Applications is built-in for scholarship deadlines.
+          Classes and color chips used across Masterlist. New classes get a
+          color at either end of the current range so existing chips stay put —
+          tap a swatch to change one. Applications is built-in for scholarship
+          deadlines.
         </p>
         {msg && <p className="mt-3 text-sm text-[var(--accent)]">{msg}</p>}
       </section>
@@ -378,15 +385,18 @@ export default function GroupsPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex max-w-[220px] flex-wrap gap-1 sm:max-w-none">
                   {palette.map((hex) => {
-                    const selected =
-                      c.color.toLowerCase() === hex.toLowerCase();
+                    const selected = hexesEqual(c.color, hex);
                     return (
                       <button
                         key={hex}
                         type="button"
-                        className={`h-6 w-6 rounded-full border-2 ${
+                        aria-label={
+                          selected ? `Selected color ${hex}` : `Color ${hex}`
+                        }
+                        aria-pressed={selected}
+                        className={`h-6 w-6 rounded-full border-2 transition-transform ${
                           selected
-                            ? "border-[var(--ink)] scale-110"
+                            ? "scale-110 border-[var(--ink)] ring-2 ring-[var(--ink)]/30"
                             : "border-white/60"
                         }`}
                         style={{ background: hex }}

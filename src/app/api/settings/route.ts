@@ -33,6 +33,7 @@ export async function GET(req: Request) {
         timezone: settings.timezone,
         uiTheme: settings.uiTheme,
         cronControl: settings.cronControl,
+        taskHorizonDays: settings.taskHorizonDays,
       },
       provider: db.dbProvider(),
     });

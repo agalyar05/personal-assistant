@@ -74,7 +74,7 @@ export function applicationToSheetRow(
     pointsPossible: null,
     notes: [app.description, app.notes].filter(Boolean).join("\n\n"),
     link: app.url,
-    sortOrder: 50_000 + (app.sortOrder || 0),
+    sortOrder: app.sortOrder || 0,
     dueReminderSentFor: null,
     todoItemId: null,
     createdAt: app.createdAt,

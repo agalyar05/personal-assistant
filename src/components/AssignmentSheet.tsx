@@ -94,6 +94,7 @@ export function AssignmentSheet({
   assignments,
   courses,
   onChangeLocal,
+  onApplySortOrders,
   onPatch,
   onAddRow,
   onInsertRow,
@@ -105,6 +106,7 @@ export function AssignmentSheet({
   assignments: Assignment[];
   courses: Course[];
   onChangeLocal: (id: string, patch: Partial<Assignment>) => void;
+  onApplySortOrders: (orders: { id: string; sortOrder: number }[]) => void;
   onPatch: (patch: Partial<Assignment> & { id: string }) => Promise<void>;
   onAddRow: () => Promise<void>;
   onInsertRow: (
@@ -114,6 +116,7 @@ export function AssignmentSheet({
   onDelete: (id: string) => Promise<void>;
   onBulk: (
     rows: (Partial<Assignment> & { title?: string; id?: string })[],
+    opts?: { keepLocal?: boolean },
   ) => Promise<void>;
   onToggleTodo: (id: string, onTodo: boolean) => Promise<void>;
   onMsg: (msg: string) => void;
@@ -789,11 +792,11 @@ export function AssignmentSheet({
       title: row.title,
       sortOrder: i + 1,
     }));
-    for (const p of patchRows) {
-      onChangeLocal(p.id, { sortOrder: p.sortOrder });
-    }
+    onApplySortOrders(
+      patchRows.map((p) => ({ id: p.id, sortOrder: p.sortOrder })),
+    );
     setSort(null);
-    await onBulk(patchRows);
+    await onBulk(patchRows, { keepLocal: true });
     onMsg("Rows reordered");
   }
 
@@ -838,10 +841,10 @@ export function AssignmentSheet({
       title: row.title,
       sortOrder: i + 1,
     }));
-    for (const p of patchRows) {
-      onChangeLocal(p.id, { sortOrder: p.sortOrder });
-    }
-    await onBulk(patchRows);
+    onApplySortOrders(
+      patchRows.map((p) => ({ id: p.id, sortOrder: p.sortOrder })),
+    );
+    await onBulk(patchRows, { keepLocal: true });
     const label =
       key === "courseId" ? "class" : key === "dueAt" ? "due date" : "progress";
     onMsg(`Sorted by ${label} (${nextDir === "asc" ? "A→Z" : "Z→A"})`);
@@ -915,31 +918,6 @@ export function AssignmentSheet({
     const common =
       "w-full bg-transparent px-0.5 py-0.5 text-sm outline-none";
 
-    // Class is always a real dropdown (sheet cell clicks were blocking selects).
-    if (col === "courseId") {
-      return (
-        <select
-          ref={setRef}
-          className={`${common} cursor-pointer`}
-          value={a.courseId || ""}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            const courseId = e.target.value || null;
-            onChangeLocal(a.id, { courseId });
-            void onPatch({ id: a.id, courseId });
-          }}
-        >
-          <option value="">—</option>
-          {courses.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.code || c.name}
-            </option>
-          ))}
-        </select>
-      );
-    }
-
     if (col === "todo") {
       return (
         <div className="flex min-h-[1.75rem] items-center justify-center">
@@ -990,6 +968,32 @@ export function AssignmentSheet({
         <div className="flex min-h-[1.75rem] items-center truncate px-0.5">
           {getDisplay(a, col) || "\u00A0"}
         </div>
+      );
+    }
+
+    if (col === "courseId") {
+      return (
+        <select
+          ref={setRef}
+          className={`${common} cursor-pointer`}
+          value={a.courseId || ""}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const courseId = e.target.value || null;
+            onChangeLocal(a.id, { courseId });
+            void onPatch({ id: a.id, courseId });
+            setEditing(false);
+          }}
+          onBlur={() => setEditing(false)}
+        >
+          <option value="">—</option>
+          {courses.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.code || c.name}
+            </option>
+          ))}
+        </select>
       );
     }
 
@@ -1311,11 +1315,12 @@ export function AssignmentSheet({
                           selectCell(pos, { shift: true, edit: false });
                           return;
                         }
-                        selectCell(pos, { edit: false });
-                        setRangeDragging(true);
+                        // Class opens dropdown on click; other cells select first.
+                        selectCell(pos, { edit: col === "courseId" });
+                        if (col !== "courseId") setRangeDragging(true);
                       }}
                       onDoubleClick={() => {
-                        if (col === "todo" || col === "courseId") return;
+                        if (col === "todo") return;
                         selectCell(pos, { edit: true });
                       }}
                       onMouseEnter={() => {

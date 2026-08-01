@@ -31,6 +31,10 @@ export function calendar() {
   return google.calendar({ version: "v3", auth: oauth2Client() });
 }
 
+function lookbackDays(): string {
+  return process.env.GMAIL_LOOKBACK_DAYS?.trim() || "1";
+}
+
 function decodeBody(payload: {
   mimeType?: string | null;
   body?: { data?: string | null } | null;
@@ -105,27 +109,46 @@ function headerMap(
   return out;
 }
 
+/** Cheap probe — skip full thread hydration when nothing unread matches. */
+async function hasUnreadVoiceCandidates(
+  service: ReturnType<typeof gmail>,
+): Promise<boolean> {
+  const phoneDigits = getPhoneDigitsFromEnv();
+  const days = lookbackDays();
+  const q = `is:unread (from:txt.voice.google.com OR ${phoneDigits}) newer_than:${days}d`;
+  const res = await service.users.messages.list({
+    userId: "me",
+    q,
+    maxResults: 1,
+  });
+  return (res.data.messages?.length || 0) > 0;
+}
+
 async function collectThreadIds(
   service: ReturnType<typeof gmail>,
   maxResults = 30,
 ): Promise<string[]> {
   const phoneDigits = getPhoneDigitsFromEnv();
   const phoneEmail = getPhoneEmail();
-  const days = process.env.GMAIL_LOOKBACK_DAYS?.trim() || "7";
+  const days = lookbackDays();
   const queries = [
     `is:unread ${phoneDigits} newer_than:${days}d`,
-    `from:txt.voice.google.com newer_than:${days}d`,
-    `from:txt.voice.google.com ${phoneDigits} newer_than:${days}d`,
-    `from:${phoneEmail} newer_than:${days}d`,
+    `is:unread from:txt.voice.google.com newer_than:${days}d`,
+    `is:unread from:txt.voice.google.com ${phoneDigits} newer_than:${days}d`,
+    `is:unread from:${phoneEmail} newer_than:${days}d`,
   ];
+  const lists = await Promise.all(
+    queries.map((q) =>
+      service.users.threads.list({
+        userId: "me",
+        q,
+        maxResults: Math.min(maxResults, 40),
+      }),
+    ),
+  );
   const seen = new Set<string>();
   const ids: string[] = [];
-  for (const q of queries) {
-    const res = await service.users.threads.list({
-      userId: "me",
-      q,
-      maxResults: Math.min(maxResults, 40),
-    });
+  for (const res of lists) {
     for (const t of res.data.threads || []) {
       if (t.id && !seen.has(t.id)) {
         seen.add(t.id);
@@ -192,19 +215,33 @@ function findUnansweredInbounds(
 export async function getIncomingTexts(): Promise<InboundText[]> {
   if (!process.env.PHONE_EMAIL?.trim()) return [];
   const service = gmail();
+
+  // Most ticks have nothing new — avoid loading every recent thread.
+  if (!(await hasUnreadVoiceCandidates(service))) {
+    return [];
+  }
+
   const profile = await service.users.getProfile({ userId: "me" });
   const myEmail = profile.data.emailAddress || "";
   const threadIds = await collectThreadIds(service);
+  if (!threadIds.length) return [];
+
+  const threads = await Promise.all(
+    threadIds.map((threadId) =>
+      service.users.threads.get({
+        userId: "me",
+        id: threadId,
+        format: "full",
+      }),
+    ),
+  );
+
   const incoming: InboundText[] = [];
   const seenMsg = new Set<string>();
 
-  for (const threadId of threadIds) {
-    const thread = await service.users.threads.get({
-      userId: "me",
-      id: threadId,
-      format: "full",
-    });
-    const messages = thread.data.messages || [];
+  for (let i = 0; i < threadIds.length; i++) {
+    const threadId = threadIds[i]!;
+    const messages = threads[i]?.data.messages || [];
     const inbounds = findUnansweredInbounds(messages, myEmail);
     for (const inbound of inbounds) {
       if (!inbound?.id || !inbound.payload) continue;
@@ -270,12 +307,20 @@ export async function sendTextReply(
   });
 }
 
-/** Find a recent GV SMS thread so proactive texts (briefing/reminders) deliver as SMS. */
-async function findLatestVoiceThread(preferredTo?: string): Promise<{
+type VoiceThread = {
   threadId: string;
   to: string;
   subject: string;
-} | null> {
+};
+
+/** Warm-instance cache so briefing parts / reminder bursts don't re-search Gmail. */
+let voiceThreadCache: { thread: VoiceThread; fetchedAt: number } | null = null;
+const VOICE_THREAD_TTL_MS = 15 * 60_000;
+
+let handledLabelIdCache: string | null = null;
+
+/** Find a recent GV SMS thread so proactive texts (briefing/reminders) deliver as SMS. */
+async function findLatestVoiceThread(preferredTo?: string): Promise<VoiceThread | null> {
   const service = gmail();
   const phoneDigits = getPhoneDigitsFromEnv();
   const res = await service.users.threads.list({
@@ -317,7 +362,31 @@ async function findLatestVoiceThread(preferredTo?: string): Promise<{
   return null;
 }
 
-export async function sendSms(body: string, _subject = "Message"): Promise<void> {
+async function resolveVoiceThread(preferredTo?: string): Promise<VoiceThread | null> {
+  if (
+    voiceThreadCache &&
+    Date.now() - voiceThreadCache.fetchedAt < VOICE_THREAD_TTL_MS
+  ) {
+    const cached = voiceThreadCache.thread;
+    if (
+      !preferredTo ||
+      !isGoogleVoiceAddress(normalizeEmailAddress(preferredTo)) ||
+      normalizeEmailAddress(cached.to) === normalizeEmailAddress(preferredTo)
+    ) {
+      return cached;
+    }
+  }
+  const thread = await findLatestVoiceThread(preferredTo);
+  if (thread) {
+    voiceThreadCache = { thread, fetchedAt: Date.now() };
+  }
+  return thread;
+}
+
+async function resolveSmsDestination(): Promise<{
+  to: string;
+  thread: VoiceThread | null;
+}> {
   const { getSettings, updateSettings } = await import("../db");
   const settings = await getSettings();
   let to =
@@ -325,7 +394,6 @@ export async function sendSms(body: string, _subject = "Message"): Promise<void>
     settings.googleVoiceReply ||
     "";
   if (!to) {
-    // fall back to phone email (may not deliver as SMS via GV)
     to = getPhoneEmail();
   }
   if (
@@ -337,25 +405,36 @@ export async function sendSms(body: string, _subject = "Message"): Promise<void>
     });
   }
 
-  // Prefer replying inside an existing GV thread — new emails often stay in Gmail
-  // and never become phone SMS.
-  const thread = await findLatestVoiceThread(to);
+  const thread = await resolveVoiceThread(to);
+  if (thread && settings.googleVoiceReply !== thread.to) {
+    await updateSettings({ googleVoiceReply: thread.to });
+  }
+  return { to, thread };
+}
+
+export async function sendSms(body: string, _subject = "Message"): Promise<void> {
+  const { to, thread } = await resolveSmsDestination();
   if (thread) {
     await sendTextReply(thread.to, thread.subject, body, thread.threadId);
-    if (settings.googleVoiceReply !== thread.to) {
-      await updateSettings({ googleVoiceReply: thread.to });
-    }
     return;
   }
-
   await sendTextReply(to, "", body);
 }
 
 /** Send several SMS bodies with a short delay (GV is flaky with long multi-line texts). */
 export async function sendSmsParts(parts: string[]): Promise<void> {
   const cleaned = parts.map((p) => p.trim()).filter(Boolean);
+  if (!cleaned.length) return;
+
+  // Resolve the GV thread once for the whole burst.
+  const { to, thread } = await resolveSmsDestination();
   for (let i = 0; i < cleaned.length; i++) {
-    await sendSms(cleaned[i]!);
+    const part = cleaned[i]!;
+    if (thread) {
+      await sendTextReply(thread.to, thread.subject, part, thread.threadId);
+    } else {
+      await sendTextReply(to, "", part);
+    }
     if (i < cleaned.length - 1) {
       await new Promise((r) =>
         setTimeout(r, Number(process.env.GV_SEND_DELAY_MS || 1500)),
@@ -382,8 +461,10 @@ export async function sendUserReply(
   await sendTextReply(toAddress, subject, reply, threadId);
 }
 
-export async function markMessageHandled(messageId: string): Promise<void> {
-  const service = gmail();
+async function ensureHandledLabelId(
+  service: ReturnType<typeof gmail>,
+): Promise<string | undefined> {
+  if (handledLabelIdCache) return handledLabelIdCache;
   const labelName = "assistant-handled";
   const labels = await service.users.labels.list({ userId: "me" });
   let labelId = labels.data.labels?.find((l) => l.name === labelName)?.id;
@@ -394,6 +475,13 @@ export async function markMessageHandled(messageId: string): Promise<void> {
     });
     labelId = created.data.id || undefined;
   }
+  if (labelId) handledLabelIdCache = labelId;
+  return labelId;
+}
+
+export async function markMessageHandled(messageId: string): Promise<void> {
+  const service = gmail();
+  const labelId = await ensureHandledLabelId(service);
   await service.users.messages.modify({
     userId: "me",
     id: messageId,
@@ -406,16 +494,7 @@ export async function markMessageHandled(messageId: string): Promise<void> {
 
 export async function markThreadHandled(threadId: string): Promise<void> {
   const service = gmail();
-  const labelName = "assistant-handled";
-  const labels = await service.users.labels.list({ userId: "me" });
-  let labelId = labels.data.labels?.find((l) => l.name === labelName)?.id;
-  if (!labelId) {
-    const created = await service.users.labels.create({
-      userId: "me",
-      requestBody: { name: labelName },
-    });
-    labelId = created.data.id || undefined;
-  }
+  const labelId = await ensureHandledLabelId(service);
   if (!labelId) return;
   const thread = await service.users.threads.get({ userId: "me", id: threadId });
   for (const msg of thread.data.messages || []) {
@@ -434,4 +513,5 @@ export async function markThreadHandled(threadId: string): Promise<void> {
 export async function saveGoogleVoiceReply(address: string): Promise<void> {
   const { updateSettings } = await import("../db");
   await updateSettings({ googleVoiceReply: normalizeEmailAddress(address) });
+  voiceThreadCache = null;
 }
