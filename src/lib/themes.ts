@@ -325,7 +325,7 @@ export function classSwatchPalette(
     out.push(n);
   }
 
-  let working = [...out];
+  const working = [...out];
   for (let i = 0; i < Math.max(0, extraUnused); i++) {
     const next = nextUnusedClassColor(theme, working);
     const n = normalizeHex(next);
