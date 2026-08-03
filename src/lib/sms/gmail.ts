@@ -109,19 +109,32 @@ function headerMap(
   return out;
 }
 
-/** Cheap probe — skip full thread hydration when nothing unread matches. */
-async function hasUnreadVoiceCandidates(
+const HANDLED_LABEL = "assistant-handled";
+
+/**
+ * Cheap probe — skip thread hydration when there's nothing to do.
+ * Match unread OR not-yet-labeled (Gmail may auto-mark GV mail as read).
+ */
+async function hasInboundCandidates(
   service: ReturnType<typeof gmail>,
 ): Promise<boolean> {
   const phoneDigits = getPhoneDigitsFromEnv();
+  const phoneEmail = getPhoneEmail();
   const days = lookbackDays();
-  const q = `is:unread (from:txt.voice.google.com OR ${phoneDigits}) newer_than:${days}d`;
-  const res = await service.users.messages.list({
-    userId: "me",
-    q,
-    maxResults: 1,
-  });
-  return (res.data.messages?.length || 0) > 0;
+  const queries = [
+    `(is:unread OR -label:${HANDLED_LABEL}) from:txt.voice.google.com newer_than:${days}d`,
+    `(is:unread OR -label:${HANDLED_LABEL}) ${phoneDigits} newer_than:${days}d`,
+    `is:unread from:${phoneEmail} newer_than:${days}d`,
+  ];
+  for (const q of queries) {
+    const res = await service.users.messages.list({
+      userId: "me",
+      q,
+      maxResults: 1,
+    });
+    if (res.data.messages?.length) return true;
+  }
+  return false;
 }
 
 async function collectThreadIds(
@@ -131,10 +144,12 @@ async function collectThreadIds(
   const phoneDigits = getPhoneDigitsFromEnv();
   const phoneEmail = getPhoneEmail();
   const days = lookbackDays();
+  // Prefer unread / unlabeled — do not require is:unread only (GV mail is often
+  // opened or auto-read in Gmail before cron runs).
   const queries = [
-    `is:unread ${phoneDigits} newer_than:${days}d`,
-    `is:unread from:txt.voice.google.com newer_than:${days}d`,
-    `is:unread from:txt.voice.google.com ${phoneDigits} newer_than:${days}d`,
+    `(is:unread OR -label:${HANDLED_LABEL}) from:txt.voice.google.com newer_than:${days}d`,
+    `(is:unread OR -label:${HANDLED_LABEL}) from:txt.voice.google.com ${phoneDigits} newer_than:${days}d`,
+    `(is:unread OR -label:${HANDLED_LABEL}) ${phoneDigits} newer_than:${days}d`,
     `is:unread from:${phoneEmail} newer_than:${days}d`,
   ];
   const lists = await Promise.all(
@@ -217,7 +232,8 @@ export async function getIncomingTexts(): Promise<InboundText[]> {
   const service = gmail();
 
   // Most ticks have nothing new — avoid loading every recent thread.
-  if (!(await hasUnreadVoiceCandidates(service))) {
+  // Still pick up read-but-unhandled GV mail (not unread-only).
+  if (!(await hasInboundCandidates(service))) {
     return [];
   }
 
@@ -465,13 +481,12 @@ async function ensureHandledLabelId(
   service: ReturnType<typeof gmail>,
 ): Promise<string | undefined> {
   if (handledLabelIdCache) return handledLabelIdCache;
-  const labelName = "assistant-handled";
   const labels = await service.users.labels.list({ userId: "me" });
-  let labelId = labels.data.labels?.find((l) => l.name === labelName)?.id;
+  let labelId = labels.data.labels?.find((l) => l.name === HANDLED_LABEL)?.id;
   if (!labelId) {
     const created = await service.users.labels.create({
       userId: "me",
-      requestBody: { name: labelName },
+      requestBody: { name: HANDLED_LABEL },
     });
     labelId = created.data.id || undefined;
   }
