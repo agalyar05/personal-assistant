@@ -114,6 +114,16 @@ export default function ListsPage() {
     setMsg(`Renamed to .${next}`);
   }
 
+  async function deleteItem(id: string) {
+    if (!confirm("Delete this item?")) return;
+    await fetch("/api/lists", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "remove", id }),
+    });
+    setItems((prev) => prev.filter((i) => i.id !== id));
+  }
+
   async function deleteList() {
     if (!confirm(`Delete .${listName} and all its items?`)) return;
     const res = await fetch("/api/lists", {
@@ -203,6 +213,11 @@ export default function ListsPage() {
           {items.map((item, i) => (
             <li
               key={item.id}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                void deleteItem(item.id);
+              }}
+              title="Right-click to delete"
               className="rounded-xl border border-[var(--line)] bg-white/70 px-4 py-3 text-sm"
             >
               {i + 1}. {item.text}

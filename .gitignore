@@ -45,3 +45,6 @@ token.json
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local Claude Code permission state (machine-specific)
+.claude/settings.local.json

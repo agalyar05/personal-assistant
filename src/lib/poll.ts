@@ -132,8 +132,8 @@ export async function sendMorningBriefingNow(): Promise<void> {
 export async function runPollCycle(opts?: {
   force?: boolean;
 }): Promise<{ skipped: boolean; reason?: string; replies?: number }> {
-  const settings = await db.getSettings();
-  const gate = isCronActive(settings.cronControl);
+  const cronControl = await db.getCronControl();
+  const gate = isCronActive(cronControl);
   if (!opts?.force && !gate.active) {
     log(`Cron skip: ${gate.reason}`);
     return { skipped: true, reason: gate.reason };

@@ -93,11 +93,3 @@ export async function formatDueSummary(
         : "Due this week:";
   return [header, ...lines].join("\n");
 }
-
-export function courseProgress(courseId: string, assignments: Assignment[]) {
-  const mine = assignments.filter((a) => a.courseId === courseId);
-  const done = mine.filter(
-    (a) => a.status === "complete" || a.status === "submitted",
-  ).length;
-  return { total: mine.length, completed: done };
-}

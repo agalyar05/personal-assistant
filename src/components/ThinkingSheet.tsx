@@ -48,6 +48,7 @@ export function ThinkingSheet({
   const fillStartRef = useRef<CellPos | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const barInputRef = useRef<HTMLInputElement>(null);
 
   const { colCount, rowCount, cells } = data;
 
@@ -295,6 +296,7 @@ export function ThinkingSheet({
         return;
       }
       if (e.key.length === 1 && !meta && !e.altKey) {
+        e.preventDefault();
         setDraft(e.key);
         setEditing(true);
       }
@@ -363,7 +365,7 @@ export function ThinkingSheet({
         </span>
         {editing && active ? (
           <input
-            ref={inputRef}
+            ref={barInputRef}
             className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}

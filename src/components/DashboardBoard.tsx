@@ -9,6 +9,7 @@ import {
   spanClass,
   WIDGET_CATALOG,
 } from "@/lib/dashboard";
+import { computeCourseProgress } from "@/lib/course-progress";
 import type {
   AppSettings,
   Assignment,
@@ -576,17 +577,9 @@ function WidgetBody({
       );
 
     case "progress": {
-      const cards = data.courses.map((c) => {
-        const mine = data.assignments.filter((a) => a.courseId === c.id);
-        const countable = mine.filter((a) => a.status !== "n_a");
-        const done = countable.filter(
-          (a) => a.status === "complete" || a.status === "submitted",
-        ).length;
-        const pct = countable.length
-          ? Math.round((done / countable.length) * 100)
-          : 0;
-        return { c, done, total: countable.length, pct };
-      });
+      const cards = computeCourseProgress(data.courses, data.assignments).map(
+        (p) => ({ c: p.course, done: p.done, total: p.total, pct: p.pct }),
+      );
       return (
         <div>
           <div className="flex items-baseline justify-between gap-2">

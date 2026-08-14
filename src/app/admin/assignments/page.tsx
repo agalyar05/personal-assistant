@@ -26,6 +26,7 @@ import {
   kanbanColumnClass,
 } from "@/lib/kanban-layout";
 import { normalizeApplicationUrl } from "@/lib/applications";
+import { computeCourseProgress } from "@/lib/course-progress";
 import { APPLICATION_STATUS_LABELS } from "@/lib/application-meta";
 import { isApplicationsGroup } from "@/lib/courses";
 import {
@@ -355,6 +356,11 @@ export default function AssignmentsPage() {
   }
 
   async function insertRowAt(index: number, where: "above" | "below") {
+    // `visible` (sheetRows) interleaves synthetic application rows among real
+    // assignments; `ordered` holds only real assignments, which is what sortOrder
+    // actually indexes. When the anchor is an app row, insertAt is derived by walking
+    // back to the nearest real assignment before the cut point — app rows have no
+    // sortOrder slot of their own to insert relative to.
     const ordered = [...assignments].sort(
       (a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
     );
@@ -459,12 +465,12 @@ export default function AssignmentsPage() {
   ) {
     const appRows = rows.filter((r) => r.id && isAppSheetId(r.id));
     const asnRows = rows.filter((r) => !r.id || !isAppSheetId(r.id));
-    for (const row of appRows) {
-      if (!row.id) continue;
-      await patchApplicationFromSheet(
-        row as Partial<Assignment> & { id: string },
-      );
-    }
+    // Independent per-application updates — no shared state between them.
+    await Promise.all(
+      appRows.map((row) =>
+        patchApplicationFromSheet(row as Partial<Assignment> & { id: string }),
+      ),
+    );
     if (asnRows.length) {
       const res = await fetch("/api/assignments", {
         method: "POST",
@@ -912,18 +918,7 @@ function ProgressView({
     "name" | "percent" | "remaining" | "total"
   >("percent");
 
-  const cards = courses.map((c) => {
-    const mine = assignments.filter((a) => a.courseId === c.id);
-    const countable = mine.filter((a) => a.status !== "n_a");
-    const done = countable.filter(
-      (a) => a.status === "complete" || a.status === "submitted",
-    ).length;
-    const remaining = countable.length - done;
-    const pct = countable.length
-      ? Math.round((done / countable.length) * 100)
-      : 0;
-    return { course: c, mine, done, remaining, pct, total: countable.length };
-  });
+  const cards = computeCourseProgress(courses, assignments);
 
   cards.sort((a, b) => {
     if (sortBy === "name") {
@@ -1001,6 +996,57 @@ function ProgressView({
   );
 }
 
+/** Shift-range select, cmd/ctrl-click toggle, single-select fallback — shared by
+ *  CalendarView and KanbanView, which both let you multi-select cards for a drag. */
+function useMultiSelect() {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lastSelected, setLastSelected] = useState<string | null>(null);
+
+  function selectCard(
+    id: string,
+    groupItems: { id: string }[],
+    e: React.MouseEvent,
+  ) {
+    e.stopPropagation();
+    const ids = groupItems.map((a) => a.id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (e.shiftKey && lastSelected && ids.includes(lastSelected)) {
+        const a = ids.indexOf(lastSelected);
+        const b = ids.indexOf(id);
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        for (let i = lo; i <= hi; i++) next.add(ids[i]!);
+      } else if (e.metaKey || e.ctrlKey) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+      } else if (next.has(id) && next.size > 1) {
+        // keep group for drag
+      } else {
+        next.clear();
+        next.add(id);
+      }
+      return next;
+    });
+    setLastSelected(id);
+  }
+
+  function idsToMove(primary: string): string[] {
+    if (selected.has(primary) && selected.size > 0) {
+      return Array.from(selected);
+    }
+    return [primary];
+  }
+
+  return {
+    selected,
+    setSelected,
+    lastSelected,
+    setLastSelected,
+    selectCard,
+    idsToMove,
+  };
+}
+
 function CalendarView({
   month,
   setMonth,
@@ -1052,8 +1098,7 @@ function CalendarView({
 
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overYmd, setOverYmd] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [lastSelected, setLastSelected] = useState<string | null>(null);
+  const { selected, setSelected, selectCard, idsToMove } = useMultiSelect();
 
   const assignmentsByYmd = useMemo(() => {
     const map = new Map<string, Assignment[]>();
@@ -1086,7 +1131,7 @@ function CalendarView({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [setSelected]);
 
   function assignmentsForYmd(ymd: string) {
     return assignmentsByYmd.get(ymd) || [];
@@ -1094,41 +1139,6 @@ function CalendarView({
 
   function appsForYmd(ymd: string) {
     return appsByYmd.get(ymd) || [];
-  }
-
-  function selectCard(
-    id: string,
-    dayItems: Assignment[],
-    e: React.MouseEvent,
-  ) {
-    e.stopPropagation();
-    const ids = dayItems.map((a) => a.id);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (e.shiftKey && lastSelected && ids.includes(lastSelected)) {
-        const a = ids.indexOf(lastSelected);
-        const b = ids.indexOf(id);
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        for (let i = lo; i <= hi; i++) next.add(ids[i]!);
-      } else if (e.metaKey || e.ctrlKey) {
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-      } else if (next.has(id) && next.size > 1) {
-        // keep multi-select
-      } else {
-        next.clear();
-        next.add(id);
-      }
-      return next;
-    });
-    setLastSelected(id);
-  }
-
-  function idsToMove(primary: string): string[] {
-    if (selected.has(primary) && selected.size > 0) {
-      return Array.from(selected);
-    }
-    return [primary];
   }
 
   function goToday() {
@@ -1423,8 +1433,8 @@ function KanbanView({
 }) {
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [lastSelected, setLastSelected] = useState<string | null>(null);
+  const { selected, setSelected, setLastSelected, selectCard, idsToMove } =
+    useMultiSelect();
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
     null,
   );
@@ -1448,12 +1458,12 @@ function KanbanView({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("click", onClick);
     };
-  }, []);
+  }, [setSelected]);
 
   useEffect(() => {
     setSelected(new Set());
     setLastSelected(null);
-  }, [kanbanBy]);
+  }, [kanbanBy, setSelected, setLastSelected]);
 
   const columns = useMemo(() => {
     if (kanbanBy === "status") {
@@ -1484,41 +1494,6 @@ function KanbanView({
     });
     return cols;
   }, [assignments, courses, kanbanBy]);
-
-  function selectCard(
-    id: string,
-    columnItems: Assignment[],
-    e: React.MouseEvent,
-  ) {
-    e.stopPropagation();
-    const ids = columnItems.map((a) => a.id);
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (e.shiftKey && lastSelected && ids.includes(lastSelected)) {
-        const a = ids.indexOf(lastSelected);
-        const b = ids.indexOf(id);
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        for (let i = lo; i <= hi; i++) next.add(ids[i]!);
-      } else if (e.metaKey || e.ctrlKey) {
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-      } else if (next.has(id) && next.size > 1) {
-        // keep group for drag
-      } else {
-        next.clear();
-        next.add(id);
-      }
-      return next;
-    });
-    setLastSelected(id);
-  }
-
-  function idsToMove(primary: string): string[] {
-    if (selected.has(primary) && selected.size > 0) {
-      return Array.from(selected);
-    }
-    return [primary];
-  }
 
   return (
     <section className="space-y-3">
@@ -1760,6 +1735,7 @@ function KanbanView({
             type="button"
             className="block w-full px-3 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
             onClick={() => {
+              if (!confirm("Delete this row?")) return;
               onDelete(menu.id);
               setMenu(null);
               setSelected((prev) => {

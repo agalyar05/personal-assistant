@@ -78,6 +78,16 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, n));
 }
 
+/** `abc` -> `aabbcc`; pads/truncates anything else to 6 chars. */
+function expandHex(raw: string): string {
+  return raw.length === 3
+    ? raw
+        .split("")
+        .map((c) => c + c)
+        .join("")
+    : raw.padEnd(6, "0").slice(0, 6);
+}
+
 /** Canonical `#rrggbb` lowercase, or "" if invalid. */
 export function normalizeHex(hex: string): string {
   const raw = String(hex || "")
@@ -85,13 +95,7 @@ export function normalizeHex(hex: string): string {
     .trim()
     .toLowerCase();
   if (!raw) return "";
-  const full =
-    raw.length === 3
-      ? raw
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : raw.padEnd(6, "0").slice(0, 6);
+  const full = expandHex(raw);
   if (!/^[0-9a-f]{6}$/.test(full)) return "";
   return `#${full}`;
 }
@@ -104,13 +108,7 @@ export function hexesEqual(a: string, b: string): boolean {
 
 function hexToHsl(hex: string): { h: number; s: number; l: number } {
   const raw = hex.replace("#", "").trim();
-  const full =
-    raw.length === 3
-      ? raw
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : raw.padEnd(6, "0").slice(0, 6);
+  const full = expandHex(raw);
   const r = parseInt(full.slice(0, 2), 16) / 255;
   const g = parseInt(full.slice(2, 4), 16) / 255;
   const b = parseInt(full.slice(4, 6), 16) / 255;
@@ -373,24 +371,10 @@ export function classPaletteForTheme(
 /** Soft wash of a class color for sheet row backgrounds. */
 export function faintClassTint(hex: string, alpha = 0.14): string {
   const raw = hex.replace("#", "").trim();
-  const full =
-    raw.length === 3
-      ? raw
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : raw.padEnd(6, "0").slice(0, 6);
+  const full = expandHex(raw);
   const r = parseInt(full.slice(0, 2), 16);
   const g = parseInt(full.slice(2, 4), 16);
   const b = parseInt(full.slice(4, 6), 16);
   if ([r, g, b].some((n) => Number.isNaN(n))) return "transparent";
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-/** @deprecated Prefer classSwatchPalette / classPaletteForTheme. */
-export function classColorsForTheme(themeId: ThemeId) {
-  return classPaletteForTheme(
-    { id: themeId, custom: DEFAULT_THEME_CUSTOM },
-    10,
-  ).map((hex, i) => ({ hex, label: `Color ${i + 1}` }));
 }

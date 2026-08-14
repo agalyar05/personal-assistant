@@ -78,6 +78,9 @@ async function readStore(): Promise<Store> {
   }
 }
 
+// Local dev only (prod requires Supabase, see README) — every mutator here does a full
+// read-modify-write with no locking, so two concurrent requests can race and clobber
+// each other's changes. Not worth a mutex for a single-developer local fallback.
 async function writeStore(store: Store): Promise<void> {
   await fs.mkdir(path.dirname(DATA_PATH), { recursive: true });
   await fs.writeFile(DATA_PATH, JSON.stringify(store, null, 2), "utf8");
@@ -443,15 +446,15 @@ export async function getAssignments(): Promise<Assignment[]> {
   });
 }
 
-export async function upsertAssignment(
+/** Applies one upsert to an in-memory store — no I/O, so callers can batch. */
+function applyAssignmentUpsert(
+  store: Store,
   input: Partial<Assignment> & { id?: string; title?: string },
-): Promise<Assignment> {
-  const store = await readStore();
+): Assignment {
   if (input.id) {
     const idx = store.assignments.findIndex((a) => a.id === input.id);
     if (idx >= 0) {
       store.assignments[idx] = { ...store.assignments[idx]!, ...input };
-      await writeStore(store);
       return store.assignments[idx]!;
     }
   }
@@ -478,6 +481,14 @@ export async function upsertAssignment(
     createdAt: new Date().toISOString(),
   };
   store.assignments.push(row);
+  return row;
+}
+
+export async function upsertAssignment(
+  input: Partial<Assignment> & { id?: string; title?: string },
+): Promise<Assignment> {
+  const store = await readStore();
+  const row = applyAssignmentUpsert(store, input);
   await writeStore(store);
   return row;
 }
@@ -491,8 +502,9 @@ export async function deleteAssignment(id: string): Promise<void> {
 export async function bulkUpsertAssignments(
   rows: (Partial<Assignment> & { title?: string; id?: string })[],
 ): Promise<Assignment[]> {
-  const out: Assignment[] = [];
-  for (const row of rows) out.push(await upsertAssignment(row));
+  const store = await readStore();
+  const out = rows.map((row) => applyAssignmentUpsert(store, row));
+  await writeStore(store);
   return out;
 }
 

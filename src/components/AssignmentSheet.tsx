@@ -61,10 +61,45 @@ const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 const STORAGE_KEY = "pa_assignment_columns";
 const SORTABLE_COLS = new Set<ColKey>(["courseId", "dueAt", "status"]);
 
-type FillMode = "auto" | "daily" | "weekly";
+type FillMode = "auto" | "daily" | "weekly" | "monthly";
 type CellPos = { row: number; col: number };
 type SortDir = "asc" | "desc";
 type SortState = { key: ColKey; dir: SortDir };
+
+/** Shared by the live-sort view and the "sort + persist order" action. Items with
+ *  no course/due date always sink to the bottom, regardless of sort direction. */
+function compareAssignments(
+  a: Assignment,
+  b: Assignment,
+  key: ColKey,
+  mul: 1 | -1,
+  courseLabel: Map<string, string>,
+): number {
+  let cmp = 0;
+  if (key === "courseId") {
+    const la = a.courseId ? courseLabel.get(a.courseId) || "" : "";
+    const lb = b.courseId ? courseLabel.get(b.courseId) || "" : "";
+    if (!la && !lb) cmp = 0;
+    else if (!la) return 1;
+    else if (!lb) return -1;
+    else cmp = la.localeCompare(lb, undefined, { sensitivity: "base" });
+  } else if (key === "dueAt") {
+    const da = a.dueAt || "";
+    const db = b.dueAt || "";
+    if (!da && !db) cmp = 0;
+    else if (!da) return 1;
+    else if (!db) return -1;
+    else cmp = da.localeCompare(db);
+  } else if (key === "status") {
+    cmp =
+      ASSIGNMENT_STATUSES.indexOf(a.status) - ASSIGNMENT_STATUSES.indexOf(b.status);
+  }
+  if (cmp === 0) {
+    cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+  }
+  if (cmp === 0) cmp = a.sortOrder - b.sortOrder;
+  return cmp * mul;
+}
 
 function normalizeUrl(raw: string): string {
   const s = raw.trim();
@@ -149,6 +184,15 @@ export function AssignmentSheet({
     new Map(),
   );
   const headerDraggedRef = useRef(false);
+  const blurTimersRef = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    const timers = blurTimersRef.current;
+    return () => {
+      for (const t of timers) window.clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   const courseLabel = useMemo(() => {
     const m = new Map<string, string>();
@@ -168,33 +212,7 @@ export function AssignmentSheet({
       return list.sort((a, b) => a.sortOrder - b.sortOrder);
     }
     const mul = sort.dir === "asc" ? 1 : -1;
-    return list.sort((a, b) => {
-      let cmp = 0;
-      if (sort.key === "courseId") {
-        const la = a.courseId ? courseLabel.get(a.courseId) || "" : "";
-        const lb = b.courseId ? courseLabel.get(b.courseId) || "" : "";
-        if (!la && !lb) cmp = 0;
-        else if (!la) return 1;
-        else if (!lb) return -1;
-        else cmp = la.localeCompare(lb, undefined, { sensitivity: "base" });
-      } else if (sort.key === "dueAt") {
-        const da = a.dueAt || "";
-        const db = b.dueAt || "";
-        if (!da && !db) cmp = 0;
-        else if (!da) return 1;
-        else if (!db) return -1;
-        else cmp = da.localeCompare(db);
-      } else if (sort.key === "status") {
-        cmp =
-          ASSIGNMENT_STATUSES.indexOf(a.status) -
-          ASSIGNMENT_STATUSES.indexOf(b.status);
-      }
-      if (cmp === 0) {
-        cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
-      }
-      if (cmp === 0) cmp = a.sortOrder - b.sortOrder;
-      return cmp * mul;
-    });
+    return list.sort((a, b) => compareAssignments(a, b, sort.key, mul, courseLabel));
   }, [assignments, sort, courseLabel]);
 
   useEffect(() => {
@@ -347,21 +365,6 @@ export function AssignmentSheet({
     };
   }, [active, anchor]);
 
-  async function applyFillRange(
-    start: CellPos,
-    endRow: number,
-    colIndex: number,
-  ) {
-    // Legacy single-column path — prefer applyFillFromSelection.
-    const source = {
-      r0: start.row,
-      r1: start.row,
-      c0: colIndex,
-      c1: colIndex,
-    };
-    await applyFillFromSelection(source, endRow);
-  }
-
   /** Spreadsheet-style fill: extend selection downward into new rows. */
   async function applyFillFromSelection(
     source: { r0: number; r1: number; c0: number; c1: number },
@@ -455,12 +458,10 @@ export function AssignmentSheet({
       onMsg("Select a cell first");
       return;
     }
-    const endRow = Math.min(rows.length - 1, active.row + count - 1);
     // Also create new rows if needed via existing bulk path for title/due
     const seed = rows[active.row];
     if (!seed) return;
     const col = cols[active.col]!;
-    const need = count - (rows.length - active.row);
     const titles = fillTitleSeries(seed.title, count);
     const patchRows: (Partial<Assignment> & { title?: string; id?: string })[] =
       [];
@@ -548,7 +549,6 @@ export function AssignmentSheet({
         }
       }
     }
-    void need;
     await onBulk(patchRows);
     onMsg(`Filled ${count} ${metaByKey.get(col)?.label || col} cells`);
   }
@@ -808,33 +808,9 @@ export function AssignmentSheet({
     setSort(nextSort);
 
     const mul = nextDir === "asc" ? 1 : -1;
-    const sorted = [...assignments].sort((a, b) => {
-      let cmp = 0;
-      if (key === "courseId") {
-        const la = a.courseId ? courseLabel.get(a.courseId) || "" : "";
-        const lb = b.courseId ? courseLabel.get(b.courseId) || "" : "";
-        if (!la && !lb) cmp = 0;
-        else if (!la) return 1;
-        else if (!lb) return -1;
-        else cmp = la.localeCompare(lb, undefined, { sensitivity: "base" });
-      } else if (key === "dueAt") {
-        const da = a.dueAt || "";
-        const db = b.dueAt || "";
-        if (!da && !db) cmp = 0;
-        else if (!da) return 1;
-        else if (!db) return -1;
-        else cmp = da.localeCompare(db);
-      } else if (key === "status") {
-        cmp =
-          ASSIGNMENT_STATUSES.indexOf(a.status) -
-          ASSIGNMENT_STATUSES.indexOf(b.status);
-      }
-      if (cmp === 0) {
-        cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
-      }
-      if (cmp === 0) cmp = a.sortOrder - b.sortOrder;
-      return cmp * mul;
-    });
+    const sorted = [...assignments].sort((a, b) =>
+      compareAssignments(a, b, key, mul, courseLabel),
+    );
 
     const patchRows = sorted.map((row, i) => ({
       id: row.id,
@@ -902,9 +878,13 @@ export function AssignmentSheet({
 
   function commitBlur(id: string, col: ColKey, value: string) {
     const patch = parseValue(col, value);
-    window.setTimeout(() => {
+    // Short delay so a click that's moving the active cell/selection lands first —
+    // committing immediately can race the mousedown handler for the next cell.
+    const timer = window.setTimeout(() => {
+      blurTimersRef.current.delete(timer);
       void onPatch({ id, ...patch });
     }, 40);
+    blurTimersRef.current.add(timer);
   }
 
   function renderEditor(a: Assignment, col: ColKey, pos: CellPos): ReactNode {
@@ -1124,6 +1104,7 @@ export function AssignmentSheet({
           >
             <option value="weekly">weekly</option>
             <option value="daily">daily</option>
+            <option value="monthly">monthly</option>
             <option value="auto">auto</option>
           </select>
         </label>
@@ -1379,7 +1360,9 @@ export function AssignmentSheet({
                   <button
                     type="button"
                     className="text-[10px] text-red-700"
-                    onClick={() => void onDelete(a.id)}
+                    onClick={() => {
+                      if (confirm("Delete this row?")) void onDelete(a.id);
+                    }}
                   >
                     Del
                   </button>

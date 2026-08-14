@@ -7,7 +7,7 @@ import {
   kanbanBoardClass,
   kanbanBoardStyle,
   kanbanColumnBodyClass,
-  kanbanColumnClass,
+  kanbanColumnClassWithFooter,
 } from "@/lib/kanban-layout";
 
 type ColumnId = ListDifficulty | "done";
@@ -239,7 +239,7 @@ export default function TodoPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-24">
       <CelebrationBurst
         open={celebrate}
         onDone={() => setCelebrate(false)}
@@ -267,28 +267,9 @@ export default function TodoPage() {
             </p>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <input
-            value={newText}
-            onChange={(e) => setNewText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void addTodo();
-            }}
-            placeholder="Add a todo…"
-            className="min-w-[180px] flex-1 rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-          />
-          <button
-            type="button"
-            onClick={() => void addTodo()}
-            className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
-          >
-            Add
-          </button>
-        </div>
-        {msg && <p className="mt-2 text-sm text-[var(--muted)]">{msg}</p>}
       </section>
 
-      <div className={kanbanBoardClass} style={kanbanBoardStyle(columns.length)}>
+      <div className={kanbanBoardClass} style={kanbanBoardStyle(columns.length, 19.5)}>
         {columns.map((col) => (
           <div
             key={col.id}
@@ -316,7 +297,7 @@ export default function TodoPage() {
               setOverCol(null);
               setOverItemId(null);
             }}
-            className={`${kanbanColumnClass} ${
+            className={`${kanbanColumnClassWithFooter} ${
               overCol === col.id
                 ? "border-[var(--accent)] bg-[var(--accent-soft)]/50"
                 : "border-[var(--line)] bg-[var(--card)]"
@@ -477,6 +458,30 @@ export default function TodoPage() {
           </button>
         </div>
       )}
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--card)]/95 backdrop-blur">
+        <div className="mx-auto max-w-[100rem] px-3 py-3 sm:px-5">
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={newText}
+              onChange={(e) => setNewText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void addTodo();
+              }}
+              placeholder="Add a todo…"
+              className="min-w-[180px] flex-1 rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={() => void addTodo()}
+              className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
+            >
+              Add
+            </button>
+          </div>
+          {msg && <p className="mt-2 text-sm text-[var(--muted)]">{msg}</p>}
+        </div>
+      </div>
     </div>
   );
 }

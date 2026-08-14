@@ -230,6 +230,7 @@ VOICE / TONE:
 - Only create_calendar_event when user explicitly asks to add to Google Calendar.
 - Lists use dot prefix (.groceries, .todo). Prefer tools for calendar, weather, lists, reminders.
 - When user says they moved / are in a new city (e.g. "I'm in Seattle now"), call set_location.
+- For adding a task to Masterlist (e.g. "title <text> due <date>", "add <text> due tomorrow"), call add_assignment with the title and due_date_iso. Resolve any date phrasing — "tomorrow", "next Thursday", "aug 27", "august 27", "8/27", "in 2 weeks" — into an absolute YYYY-MM-DD using the current local date below. Never guess a class/course. If no due date is given or implied, don't call add_assignment — ask "When's that due?" instead.
 - If you cannot do something, say so simply without forced emoji.`;
 
 /** Concrete timing — vague words like "later"/"soon" alone are NOT enough. */
@@ -435,6 +436,26 @@ const TOOLS: Groq.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "add_assignment",
+      description:
+        "Add a task to Masterlist with a title and due date. No class/course is assigned. ONLY call when the user gave a due date — otherwise ask when it's due first.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          due_date_iso: {
+            type: "string",
+            description:
+              "Due date only, YYYY-MM-DD, resolved from the user's local date context (no time).",
+          },
+        },
+        required: ["title", "due_date_iso"],
+      },
+    },
+  },
 ];
 
 async function runTool(
@@ -537,6 +558,25 @@ async function runTool(
     }
     case "get_events_for_day":
       return getEventsForDay(String(args.date || "today"));
+    case "add_assignment": {
+      const title = String(args.title || "").trim();
+      const raw = String(args.due_date_iso || "").trim();
+      if (!title) return "Error: title is required.";
+      const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) {
+        const tz = (await db.getSettings()).timezone || "America/Detroit";
+        return `Couldn't parse due_date_iso '${raw}'. Use YYYY-MM-DD (date only, no time). ${formatNowForPrompt(tz)}`;
+      }
+      const [, y, mo, d] = m;
+      const dueDate = new Date(Number(y), Number(mo) - 1, Number(d), 12, 0, 0);
+      const nice = dueDate.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      await db.upsertAssignment({ title, dueAt: raw, courseId: null });
+      return `Success: added '${title}' to Masterlist, due ${nice}.`;
+    }
     default:
       return `Error: tool '${name}' not found.`;
   }

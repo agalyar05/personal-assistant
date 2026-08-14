@@ -24,13 +24,31 @@ export function fillTitleSeries(seed: string, count: number): string[] {
 export function fillDateSeries(
   seeds: (string | null)[],
   count: number,
-  mode: "auto" | "daily" | "weekly" = "auto",
+  mode: "auto" | "daily" | "weekly" | "monthly" = "auto",
 ): (string | null)[] {
   const first = seeds.find((s) => s)?.trim();
   if (!first) return Array.from({ length: count }, () => null);
 
   const d0 = parseLocalDateTime(first);
   if (!d0) return Array.from({ length: count }, () => null);
+
+  const hasTime = /T\d{2}:\d{2}/.test(first) || /\d{1,2}:\d{2}/.test(first);
+
+  if (mode === "monthly") {
+    const day = d0.getDate();
+    return Array.from({ length: count }, (_, i) => {
+      // Step from the 1st to sidestep JS's month-overflow rollover (e.g. Jan 31
+      // + 1 month would otherwise land in March), then clamp back to the target
+      // month's last day — matches Excel/Sheets "fill month" behavior.
+      const d = new Date(d0);
+      d.setDate(1);
+      d.setMonth(d.getMonth() + i);
+      const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(day, daysInMonth));
+      d.setHours(d0.getHours(), d0.getMinutes(), d0.getSeconds());
+      return formatLocalDateTime(d, hasTime);
+    });
+  }
 
   let stepDays = 7;
   if (mode === "daily") stepDays = 1;
@@ -45,7 +63,6 @@ export function fillDateSeries(
     }
   }
 
-  const hasTime = /T\d{2}:\d{2}/.test(first) || /\d{1,2}:\d{2}/.test(first);
   return Array.from({ length: count }, (_, i) => {
     const d = new Date(d0);
     d.setDate(d.getDate() + stepDays * i);

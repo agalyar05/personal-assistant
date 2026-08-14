@@ -9,6 +9,7 @@ import type {
   AssignmentStatus,
   Course,
   CourseLink,
+  CronControlSettings,
   ListItem,
   Reminder,
   Store,
@@ -29,17 +30,40 @@ function hasSupabase(): boolean {
   );
 }
 
+let cachedClient: SupabaseClient | null = null;
+
 function client(): SupabaseClient {
+  if (cachedClient) return cachedClient;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  return createClient(url, key, { auth: { persistSession: false } });
+  cachedClient = createClient(url, key, { auth: { persistSession: false } });
+  return cachedClient;
 }
 
 /** Prefer Supabase when configured; otherwise local JSON file. */
 export function dbProvider(): "supabase" | "local" {
   return hasSupabase() ? "supabase" : "local";
+}
+
+/**
+ * Just the cron gate — avoids pulling the full settings JSONB blob (which can carry
+ * dashboard image data URLs and the whole thinking sheet) on every cron tick just to
+ * check whether this tick should no-op.
+ */
+export async function getCronControl(): Promise<CronControlSettings> {
+  if (!hasSupabase()) return (await local.getSettings()).cronControl;
+  const sb = client();
+  const { data, error } = await sb
+    .from("app_settings")
+    .select("payload->cronControl")
+    .eq("id", 1)
+    .maybeSingle();
+  if (error || !data) return DEFAULT_SETTINGS.cronControl;
+  const raw = (data as { cronControl?: Partial<CronControlSettings> })
+    .cronControl;
+  return { ...DEFAULT_SETTINGS.cronControl, ...(raw || {}) };
 }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -573,54 +597,41 @@ export async function getAssignments(): Promise<Assignment[]> {
   return (data || []).map((r) => rowToAssignment(r as Record<string, unknown>));
 }
 
-export async function upsertAssignment(
-  input: Partial<Assignment> & { id?: string; title?: string },
-): Promise<Assignment> {
-  if (!hasSupabase()) return local.upsertAssignment(input);
-  const sb = client();
-
-  // Partial update — never wipe other columns with defaults
-  if (input.id) {
-    const body: Record<string, unknown> = {};
-    if (input.title !== undefined) body.title = input.title;
-    if (input.courseId !== undefined) body.course_id = input.courseId;
-    if (input.status !== undefined) body.status = input.status;
-    if (input.dueAt !== undefined) body.due_at = input.dueAt;
-    if (input.assignmentType !== undefined) {
-      body.assignment_type = input.assignmentType;
-    }
-    if (input.difficulty !== undefined) body.difficulty = input.difficulty;
-    if (input.pointsEarned !== undefined) {
-      body.points_earned = input.pointsEarned;
-    }
-    if (input.pointsPossible !== undefined) {
-      body.points_possible = input.pointsPossible;
-    }
-    if (input.notes !== undefined) body.notes = input.notes;
-    if (input.link !== undefined) body.link = input.link;
-    if (input.sortOrder !== undefined) body.sort_order = input.sortOrder;
-    if (input.dueReminderSentFor !== undefined) {
-      body.due_reminder_sent_for = input.dueReminderSentFor;
-    }
-    if (input.todoItemId !== undefined) {
-      body.todo_item_id = input.todoItemId;
-    }
-    const { data, error } = await sb
-      .from("assignments")
-      .update(body)
-      .eq("id", input.id)
-      .select("*")
-      .single();
-    if (error || !data) {
-      throw new Error(error?.message || "Failed to update assignment");
-    }
-    return rowToAssignment(data as Record<string, unknown>);
+/** Only the columns actually present in `input` — never wipes others with defaults. */
+function assignmentUpdateBody(
+  input: Partial<Assignment>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (input.title !== undefined) body.title = input.title;
+  if (input.courseId !== undefined) body.course_id = input.courseId;
+  if (input.status !== undefined) body.status = input.status;
+  if (input.dueAt !== undefined) body.due_at = input.dueAt;
+  if (input.assignmentType !== undefined) {
+    body.assignment_type = input.assignmentType;
   }
-
-  if (!input.title?.trim()) {
-    throw new Error("title required to create assignment");
+  if (input.difficulty !== undefined) body.difficulty = input.difficulty;
+  if (input.pointsEarned !== undefined) {
+    body.points_earned = input.pointsEarned;
   }
-  const body: Record<string, unknown> = {
+  if (input.pointsPossible !== undefined) {
+    body.points_possible = input.pointsPossible;
+  }
+  if (input.notes !== undefined) body.notes = input.notes;
+  if (input.link !== undefined) body.link = input.link;
+  if (input.sortOrder !== undefined) body.sort_order = input.sortOrder;
+  if (input.dueReminderSentFor !== undefined) {
+    body.due_reminder_sent_for = input.dueReminderSentFor;
+  }
+  if (input.todoItemId !== undefined) {
+    body.todo_item_id = input.todoItemId;
+  }
+  return body;
+}
+
+function assignmentInsertBody(
+  input: Partial<Assignment> & { title: string },
+): Record<string, unknown> {
+  return {
     title: input.title.trim(),
     course_id: input.courseId ?? null,
     status: input.status ?? "not_started",
@@ -635,9 +646,33 @@ export async function upsertAssignment(
     due_reminder_sent_for: input.dueReminderSentFor ?? null,
     todo_item_id: input.todoItemId ?? null,
   };
+}
+
+export async function upsertAssignment(
+  input: Partial<Assignment> & { id?: string; title?: string },
+): Promise<Assignment> {
+  if (!hasSupabase()) return local.upsertAssignment(input);
+  const sb = client();
+
+  if (input.id) {
+    const { data, error } = await sb
+      .from("assignments")
+      .update(assignmentUpdateBody(input))
+      .eq("id", input.id)
+      .select("*")
+      .single();
+    if (error || !data) {
+      throw new Error(error?.message || "Failed to update assignment");
+    }
+    return rowToAssignment(data as Record<string, unknown>);
+  }
+
+  if (!input.title?.trim()) {
+    throw new Error("title required to create assignment");
+  }
   const { data, error } = await sb
     .from("assignments")
-    .insert(body)
+    .insert(assignmentInsertBody(input as Partial<Assignment> & { title: string }))
     .select("*")
     .single();
   if (error || !data) {
@@ -656,9 +691,92 @@ export async function bulkUpsertAssignments(
   rows: (Partial<Assignment> & { title?: string; id?: string })[],
 ): Promise<Assignment[]> {
   if (!hasSupabase()) return local.bulkUpsertAssignments(rows);
-  const out: Assignment[] = [];
-  for (const row of rows) out.push(await upsertAssignment(row));
-  return out;
+  if (!rows.length) return [];
+  const sb = client();
+  const results: Assignment[] = new Array(rows.length);
+
+  const insertIdxs: number[] = [];
+  const updateIdxs: number[] = [];
+  rows.forEach((r, i) => (r.id ? updateIdxs.push(i) : insertIdxs.push(i)));
+
+  if (insertIdxs.length) {
+    const body = insertIdxs.map((i) => {
+      const r = rows[i]!;
+      if (!r.title?.trim()) {
+        throw new Error("title required to create assignment");
+      }
+      return assignmentInsertBody(r as Partial<Assignment> & { title: string });
+    });
+    const { data, error } = await sb
+      .from("assignments")
+      .insert(body)
+      .select("*");
+    if (error || !data || data.length !== insertIdxs.length) {
+      throw new Error(error?.message || "Failed to save assignments");
+    }
+    insertIdxs.forEach((rowIdx, j) => {
+      results[rowIdx] = rowToAssignment(data[j] as Record<string, unknown>);
+    });
+  }
+
+  if (updateIdxs.length) {
+    // upsert() validates the INSERT side of its INSERT..ON CONFLICT statement even
+    // when the conflict path is the one that actually runs, so every body must
+    // satisfy `title text not null` regardless of whether this patch touches it.
+    // Backfill it from the DB for rows that didn't already provide it.
+    const needsTitle = updateIdxs.filter((i) => rows[i]!.title === undefined);
+    const titleById = new Map<string, string>();
+    if (needsTitle.length) {
+      const ids = needsTitle.map((i) => rows[i]!.id!);
+      const { data, error } = await sb
+        .from("assignments")
+        .select("id,title")
+        .in("id", ids);
+      if (error) {
+        throw new Error(error.message || "Failed to load titles for bulk update");
+      }
+      for (const row of data || []) {
+        titleById.set(row.id as string, row.title as string);
+      }
+    }
+
+    // Group by identical column set — upsert() builds one INSERT ... ON CONFLICT
+    // statement per call, so mixing shapes in one request would null out columns
+    // that some rows in the batch omit but siblings specify.
+    const groups = new Map<string, number[]>();
+    for (const rowIdx of updateIdxs) {
+      const sig = Object.keys(rows[rowIdx]!)
+        .filter((k) => k !== "id")
+        .sort()
+        .join(",");
+      const list = groups.get(sig) || [];
+      list.push(rowIdx);
+      groups.set(sig, list);
+    }
+    for (const idxs of groups.values()) {
+      const body = idxs.map((i) => {
+        const r = rows[i]!;
+        const title = r.title ?? titleById.get(r.id!);
+        return { id: r.id, ...assignmentUpdateBody(r), ...(title !== undefined ? { title } : {}) };
+      });
+      const { data, error } = await sb
+        .from("assignments")
+        .upsert(body)
+        .select("*");
+      if (error || !data) {
+        throw new Error(error?.message || "Failed to update assignments");
+      }
+      const byId = new Map(
+        (data as Record<string, unknown>[]).map((d) => [d.id as string, d]),
+      );
+      idxs.forEach((rowIdx) => {
+        const raw = byId.get(rows[rowIdx]!.id!);
+        if (raw) results[rowIdx] = rowToAssignment(raw);
+      });
+    }
+  }
+
+  return results;
 }
 
 // --- Applications ---
