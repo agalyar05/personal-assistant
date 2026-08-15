@@ -86,9 +86,23 @@ export async function POST(req: Request) {
     );
     return NextResponse.json({ ok: true });
   }
-  const msg = await lists.addToList(listName, body.items || []);
-  return NextResponse.json({
-    message: msg,
-    names: await db.getListNames(),
-  });
+  // Plain add — optionally land new items directly in a Kanban column.
+  const name = lists.normalizeListName(listName) || lists.DEFAULT_GROCERY;
+  const { added, skipped } = await db.addListItems(name, body.items || []);
+  if (added.length && (body.difficulty || body.checked)) {
+    await Promise.all(
+      added.map((item) =>
+        db.updateListItem(item.id, {
+          difficulty: body.difficulty,
+          checked: body.checked,
+        }),
+      ),
+    );
+  }
+  const message = lists.formatAddConfirmation(
+    `.${name}`,
+    added.map((a) => a.text),
+    skipped,
+  );
+  return NextResponse.json({ message, names: await db.getListNames() });
 }

@@ -4,10 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ListDifficulty, ListItem } from "@/lib/types";
 import { CelebrationBurst } from "@/components/CelebrationBurst";
 import {
+  applyColumnOrder,
+  KANBAN_COLUMN_DRAG_TYPE,
   kanbanBoardClass,
   kanbanBoardStyle,
   kanbanColumnBodyClass,
-  kanbanColumnClassWithFooter,
+  kanbanColumnClass,
+  reorderColumnIds,
 } from "@/lib/kanban-layout";
 
 type ColumnId = ListDifficulty | "done";
@@ -31,11 +34,13 @@ function inColumn(i: ListItem, column: ColumnId) {
 
 export default function TodoPage() {
   const [items, setItems] = useState<ListItem[]>([]);
-  const [newText, setNewText] = useState("");
+  const [colText, setColText] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<ColumnId | null>(null);
   const [overItemId, setOverItemId] = useState<string | null>(null);
+  const [colOrder, setColOrder] = useState<string[] | undefined>(undefined);
+  const [dragColId, setDragColId] = useState<ColumnId | null>(null);
   const [celebrate, setCelebrate] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [lastSelected, setLastSelected] = useState<string | null>(null);
@@ -61,6 +66,23 @@ export default function TodoPage() {
   }, [load]);
 
   useEffect(() => {
+    void (async () => {
+      const res = await fetch("/api/settings?slim=1");
+      const json = await res.json();
+      setColOrder(json.settings?.kanbanColumnOrder?.todo);
+    })();
+  }, []);
+
+  async function saveColumnOrder(order: string[]) {
+    setColOrder(order);
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kanbanColumnOrder: { todo: order } }),
+    });
+  }
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setSelected(new Set());
@@ -80,26 +102,37 @@ export default function TodoPage() {
   }, []);
 
   const columns = useMemo(() => {
-    return COLUMNS.map((col) => ({
-      ...col,
-      items: items.filter((i) => inColumn(i, col.id)).sort(bySort),
-    }));
-  }, [items]);
+    const orderedIds = applyColumnOrder(
+      COLUMNS.map((c) => c.id),
+      colOrder,
+    );
+    return orderedIds.map((id) => {
+      const col = COLUMNS.find((c) => c.id === id)!;
+      return {
+        ...col,
+        items: items.filter((i) => inColumn(i, col.id)).sort(bySort),
+      };
+    });
+  }, [items, colOrder]);
 
-  async function addTodo() {
-    const parts = newText
+  async function addTodoToColumn(colId: ColumnId) {
+    const raw = colText[colId] || "";
+    const parts = raw
       .split(/[,;\n]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     if (!parts.length) return;
+    const body: Record<string, unknown> = { list_name: "todo", items: parts };
+    if (colId === "done") body.checked = true;
+    else body.difficulty = colId;
     const res = await fetch("/api/lists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ list_name: "todo", items: parts }),
+      body: JSON.stringify(body),
     });
     const json = await res.json();
-    setMsg(json.message || "Added to Unassigned");
-    setNewText("");
+    setMsg(json.message || "Added");
+    setColText((prev) => ({ ...prev, [colId]: "" }));
     await load();
   }
 
@@ -239,7 +272,7 @@ export default function TodoPage() {
   }
 
   return (
-    <div className="space-y-4 pb-24">
+    <div className="space-y-4">
       <CelebrationBurst
         open={celebrate}
         onDone={() => setCelebrate(false)}
@@ -267,9 +300,10 @@ export default function TodoPage() {
             </p>
           </div>
         </div>
+        {msg && <p className="mt-2 text-xs text-[var(--muted)]">{msg}</p>}
       </section>
 
-      <div className={kanbanBoardClass} style={kanbanBoardStyle(columns.length, 19.5)}>
+      <div className={kanbanBoardClass} style={kanbanBoardStyle(columns.length)}>
         {columns.map((col) => (
           <div
             key={col.id}
@@ -280,6 +314,18 @@ export default function TodoPage() {
             onDragLeave={() => setOverCol((c) => (c === col.id ? null : c))}
             onDrop={(e) => {
               e.preventDefault();
+              const draggedCol = e.dataTransfer.getData(KANBAN_COLUMN_DRAG_TYPE);
+              if (draggedCol) {
+                const next = reorderColumnIds(
+                  columns.map((c) => c.id),
+                  draggedCol as ColumnId,
+                  col.id,
+                );
+                void saveColumnOrder(next);
+                setDragColId(null);
+                setOverCol(null);
+                return;
+              }
               let ids: string[] = [];
               try {
                 const raw = e.dataTransfer.getData("text/todo-ids");
@@ -297,16 +343,40 @@ export default function TodoPage() {
               setOverCol(null);
               setOverItemId(null);
             }}
-            className={`${kanbanColumnClassWithFooter} ${
+            className={`${kanbanColumnClass} ${
               overCol === col.id
                 ? "border-[var(--accent)] bg-[var(--accent-soft)]/50"
                 : "border-[var(--line)] bg-[var(--card)]"
-            }`}
+            } ${dragColId === col.id ? "opacity-50" : ""}`}
           >
-            <div className="mb-2 shrink-0 text-xs font-medium sm:text-sm">
+            <div
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(KANBAN_COLUMN_DRAG_TYPE, col.id);
+                e.dataTransfer.effectAllowed = "move";
+                setDragColId(col.id);
+              }}
+              onDragEnd={() => {
+                setDragColId(null);
+                setOverCol(null);
+              }}
+              className="mb-2 shrink-0 cursor-grab text-xs font-medium active:cursor-grabbing sm:text-sm"
+              title="Drag to reorder columns"
+            >
               {col.label}{" "}
               <span className="text-[var(--muted)]">({col.items.length})</span>
             </div>
+            <input
+              value={colText[col.id] || ""}
+              onChange={(e) =>
+                setColText((prev) => ({ ...prev, [col.id]: e.target.value }))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void addTodoToColumn(col.id);
+              }}
+              placeholder="+ Add"
+              className="mb-2 w-full shrink-0 rounded-lg border border-dashed border-[var(--line)] bg-white/60 px-2 py-1 text-xs outline-none focus:border-[var(--accent)] sm:text-sm"
+            />
             <div className={kanbanColumnBodyClass}>
               {col.items.map((item) => {
                 const isSel = selected.has(item.id);
@@ -458,30 +528,6 @@ export default function TodoPage() {
           </button>
         </div>
       )}
-
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[var(--card)]/95 backdrop-blur">
-        <div className="mx-auto max-w-[100rem] px-3 py-3 sm:px-5">
-          <div className="flex flex-wrap gap-2">
-            <input
-              value={newText}
-              onChange={(e) => setNewText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void addTodo();
-              }}
-              placeholder="Add a todo…"
-              className="min-w-[180px] flex-1 rounded-xl border border-[var(--line)] bg-white px-3 py-2 text-sm"
-            />
-            <button
-              type="button"
-              onClick={() => void addTodo()}
-              className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
-            >
-              Add
-            </button>
-          </div>
-          {msg && <p className="mt-2 text-sm text-[var(--muted)]">{msg}</p>}
-        </div>
-      </div>
     </div>
   );
 }

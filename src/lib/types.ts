@@ -79,6 +79,8 @@ export type AppSettings = {
   taskHorizonDays: number;
   /** Reminder text waiting for a time from the user (SMS follow-up). */
   pendingReminderMessage: string | null;
+  /** User-dragged Kanban column order, keyed "todo" or "masterlist:<status|difficulty|class>". */
+  kanbanColumnOrder: Record<string, string[]>;
 };
 
 export type AssignmentStatus =
@@ -256,6 +258,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   taskHorizonDays: 7,
   pendingReminderMessage: null,
+  kanbanColumnOrder: {},
 };
 
 export const DEFAULT_STORE: Store = {

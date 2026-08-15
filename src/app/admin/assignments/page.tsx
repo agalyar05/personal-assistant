@@ -20,10 +20,13 @@ import {
 import { CelebrationBurst } from "@/components/CelebrationBurst";
 import { dueDateParts, formatDueDate, withinTaskHorizon } from "@/lib/fill";
 import {
+  applyColumnOrder,
+  KANBAN_COLUMN_DRAG_TYPE,
   kanbanBoardClass,
   kanbanBoardStyle,
   kanbanColumnBodyClass,
   kanbanColumnClass,
+  reorderColumnIds,
 } from "@/lib/kanban-layout";
 import { normalizeApplicationUrl } from "@/lib/applications";
 import { computeCourseProgress } from "@/lib/course-progress";
@@ -417,9 +420,11 @@ export default function AssignmentsPage() {
     setMsg(where === "above" ? "Row inserted above" : "Row inserted below");
   }
 
-  async function addInKanbanColumn(columnId: string) {
+  async function addInKanbanColumn(columnId: string, title = "New assignment") {
+    const trimmed = title.trim();
+    if (!trimmed) return;
     const body: Record<string, unknown> = {
-      title: "New assignment",
+      title: trimmed,
       status: "not_started",
       difficulty: "medium",
       assignmentType: "Homework",
@@ -705,7 +710,9 @@ export default function AssignmentsPage() {
           courses={courses}
           kanbanBy={kanbanBy}
           setKanbanBy={setKanbanBy}
-          onAddInColumn={(columnId) => void addInKanbanColumn(columnId)}
+          onAddInColumn={(columnId, title) =>
+            void addInKanbanColumn(columnId, title)
+          }
           onDelete={(id) => void removeRow(id)}
           onRename={(id, title) => void patchAssignment({ id, title })}
           onDropCards={(ids, columnId) => {
@@ -1427,12 +1434,15 @@ function KanbanView({
   kanbanBy: KanbanBy;
   setKanbanBy: (v: KanbanBy) => void;
   onDropCards: (ids: string[], columnId: string) => void;
-  onAddInColumn: (columnId: string) => void;
+  onAddInColumn: (columnId: string, title: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
 }) {
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<string | null>(null);
+  const [colText, setColText] = useState<Record<string, string>>({});
+  const [colOrders, setColOrders] = useState<Record<string, string[]>>({});
+  const [dragColId, setDragColId] = useState<string | null>(null);
   const { selected, setSelected, setLastSelected, selectCard, idsToMove } =
     useMultiSelect();
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
@@ -1465,35 +1475,59 @@ function KanbanView({
     setLastSelected(null);
   }, [kanbanBy, setSelected, setLastSelected]);
 
+  useEffect(() => {
+    void (async () => {
+      const res = await fetch("/api/settings?slim=1");
+      const json = await res.json();
+      setColOrders(json.settings?.kanbanColumnOrder || {});
+    })();
+  }, []);
+
+  const orderKey = `masterlist:${kanbanBy}`;
+
+  async function saveColumnOrder(order: string[]) {
+    setColOrders((prev) => ({ ...prev, [orderKey]: order }));
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kanbanColumnOrder: { [orderKey]: order } }),
+    });
+  }
+
   const columns = useMemo(() => {
+    let cols: { id: string; label: string; color?: string; items: Assignment[] }[];
     if (kanbanBy === "status") {
-      return ASSIGNMENT_STATUSES.map((s) => ({
+      cols = ASSIGNMENT_STATUSES.map((s) => ({
         id: s,
         label: STATUS_LABEL[s],
         items: assignments.filter((a) => a.status === s),
       }));
-    }
-    if (kanbanBy === "difficulty") {
-      return ASSIGNMENT_DIFFICULTIES.map((d) => ({
+    } else if (kanbanBy === "difficulty") {
+      cols = ASSIGNMENT_DIFFICULTIES.map((d) => ({
         id: d,
         label: d,
         items: assignments.filter((a) => a.difficulty === d),
       }));
+    } else {
+      cols = courses.map((c) => ({
+        id: c.id,
+        label: c.code || c.name,
+        color: c.color,
+        items: assignments.filter((a) => a.courseId === c.id),
+      }));
+      cols.push({
+        id: "none",
+        label: "Unassigned",
+        color: "#94a3b8",
+        items: assignments.filter((a) => !a.courseId),
+      });
     }
-    const cols = courses.map((c) => ({
-      id: c.id,
-      label: c.code || c.name,
-      color: c.color,
-      items: assignments.filter((a) => a.courseId === c.id),
-    }));
-    cols.push({
-      id: "none",
-      label: "Unassigned",
-      color: "#94a3b8",
-      items: assignments.filter((a) => !a.courseId),
-    });
-    return cols;
-  }, [assignments, courses, kanbanBy]);
+    const order = applyColumnOrder(
+      cols.map((c) => c.id),
+      colOrders[orderKey],
+    );
+    return order.map((id) => cols.find((c) => c.id === id)!);
+  }, [assignments, courses, kanbanBy, colOrders, orderKey]);
 
   return (
     <section className="space-y-3">
@@ -1545,6 +1579,18 @@ function KanbanView({
             onDragLeave={() => setOverCol((c) => (c === col.id ? null : c))}
             onDrop={(e) => {
               e.preventDefault();
+              const draggedCol = e.dataTransfer.getData(KANBAN_COLUMN_DRAG_TYPE);
+              if (draggedCol) {
+                const next = reorderColumnIds(
+                  columns.map((c) => c.id),
+                  draggedCol,
+                  col.id,
+                );
+                void saveColumnOrder(next);
+                setDragColId(null);
+                setOverCol(null);
+                return;
+              }
               let ids: string[] = [];
               try {
                 const raw = e.dataTransfer.getData("text/assignment-ids");
@@ -1566,9 +1612,22 @@ function KanbanView({
               overCol === col.id
                 ? "border-[var(--accent)] bg-[var(--accent-soft)]/40"
                 : "border-[var(--line)]"
-            }`}
+            } ${dragColId === col.id ? "opacity-50" : ""}`}
           >
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-medium sm:text-sm">
+            <div
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(KANBAN_COLUMN_DRAG_TYPE, col.id);
+                e.dataTransfer.effectAllowed = "move";
+                setDragColId(col.id);
+              }}
+              onDragEnd={() => {
+                setDragColId(null);
+                setOverCol(null);
+              }}
+              className="mb-2 flex cursor-grab items-center gap-1.5 text-xs font-medium active:cursor-grabbing sm:text-sm"
+              title="Drag to reorder columns"
+            >
               {"color" in col && col.color && (
                 <span
                   className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -1578,6 +1637,21 @@ function KanbanView({
               <span className="min-w-0 truncate">{col.label}</span>
               <span className="text-[var(--muted)]">({col.items.length})</span>
             </div>
+            <input
+              value={colText[col.id] || ""}
+              onChange={(e) =>
+                setColText((prev) => ({ ...prev, [col.id]: e.target.value }))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const t = colText[col.id] || "";
+                  onAddInColumn(col.id, t);
+                  setColText((prev) => ({ ...prev, [col.id]: "" }));
+                }
+              }}
+              placeholder="+ Add"
+              className="mb-2 w-full shrink-0 rounded-lg border border-dashed border-[var(--line)] bg-white/60 px-2 py-1 text-xs outline-none focus:border-[var(--accent)] sm:text-sm"
+            />
             <div className={kanbanColumnBodyClass}>
               {col.items.map((a) => {
                 const isSel = selected.has(a.id);
@@ -1703,13 +1777,6 @@ function KanbanView({
                 </p>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => onAddInColumn(col.id)}
-              className="mt-2 shrink-0 rounded-lg border border-dashed border-[var(--line)] px-2 py-1.5 text-xs text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
-            >
-              + Add
-            </button>
           </div>
         ))}
       </div>

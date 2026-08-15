@@ -34,6 +34,7 @@ export async function GET(req: Request) {
         uiTheme: settings.uiTheme,
         cronControl: settings.cronControl,
         taskHorizonDays: settings.taskHorizonDays,
+        kanbanColumnOrder: settings.kanbanColumnOrder,
       },
       provider: db.dbProvider(),
     });
@@ -61,6 +62,7 @@ export async function PUT(req: Request) {
     taskHorizonDays?: number;
     liveHours?: number;
     endLive?: boolean;
+    kanbanColumnOrder?: Record<string, string[]>;
   };
   const current = await db.getSettings();
   let cronControl = { ...current.cronControl, ...(body.cronControl || {}) };
@@ -103,6 +105,9 @@ export async function PUT(req: Request) {
   } else {
     patch.taskHorizonDays = current.taskHorizonDays;
   }
+  if (body.kanbanColumnOrder !== undefined) {
+    patch.kanbanColumnOrder = body.kanbanColumnOrder;
+  }
 
   const settings = await db.updateSettings(patch);
   return NextResponse.json({
@@ -114,6 +119,7 @@ export async function PUT(req: Request) {
       uiTheme: settings.uiTheme,
       cronControl: settings.cronControl,
       taskHorizonDays: settings.taskHorizonDays,
+      kanbanColumnOrder: settings.kanbanColumnOrder,
     },
   });
 }

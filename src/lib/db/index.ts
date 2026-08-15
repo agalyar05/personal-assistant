@@ -132,6 +132,10 @@ export async function updateSettings(
     },
     dashboardLayout: patch.dashboardLayout ?? current.dashboardLayout,
     thinkingSheet: patch.thinkingSheet ?? current.thinkingSheet,
+    kanbanColumnOrder: {
+      ...current.kanbanColumnOrder,
+      ...(patch.kanbanColumnOrder || {}),
+    },
   };
   const sb = client();
   await sb.from("app_settings").upsert({ id: 1, payload: next });

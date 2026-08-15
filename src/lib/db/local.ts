@@ -115,6 +115,10 @@ export async function updateSettings(
     },
     dashboardLayout: patch.dashboardLayout ?? store.settings.dashboardLayout,
     thinkingSheet: patch.thinkingSheet ?? store.settings.thinkingSheet,
+    kanbanColumnOrder: {
+      ...store.settings.kanbanColumnOrder,
+      ...(patch.kanbanColumnOrder || {}),
+    },
   };
   await writeStore(store);
   return store.settings;
