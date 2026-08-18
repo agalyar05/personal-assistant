@@ -332,30 +332,9 @@ export default function AssignmentsPage() {
     setMsg(onTodo ? "Added to .todo" : "Removed from .todo");
   }
 
+  /** "+ Row" always inserts at the 4th visible position, not appended at the end. */
   async function addBlankRow() {
-    const res = await fetch("/api/assignments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: "New assignment",
-        status: "not_started",
-        difficulty: "medium",
-        assignmentType: "Homework",
-        link: "",
-        sortOrder: assignments.length + 1,
-      }),
-    });
-    if (!res.ok) {
-      setMsg("Could not add row");
-      return;
-    }
-    const created = (await res.json()).assignment as Assignment | undefined;
-    if (created?.id) {
-      setAssignments((prev) => [...prev, { ...created, link: created.link || "" }]);
-    } else {
-      await refreshRows();
-    }
-    setMsg("Row added");
+    await insertRowAt(3, "above");
   }
 
   async function insertRowAt(index: number, where: "above" | "below") {
