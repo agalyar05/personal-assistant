@@ -57,8 +57,10 @@ function decodeBody(payload: {
 export function extractInboundSmsText(message: string): string {
   if (!message) return "";
   let text = message.replace(/\r\n/g, "\n").trim();
+  // Real GV footer says "To respond to this text message..." — match loosely
+  // so the boilerplate (help center / legal footer) doesn't leak into the body.
   text = text.split(
-    /\n(?:To respond to this message|Sent from my|Get the Google Voice|Text Message|Text Messaging|Standard messaging rates)/i,
+    /\n(?:To respond to this (?:text )?message|Sent from my|Get the Google Voice|Text Message|Text Messaging|Standard messaging rates)/i,
   )[0].trim();
 
   const cleanLines = (block: string) =>

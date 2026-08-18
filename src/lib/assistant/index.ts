@@ -33,8 +33,26 @@ function groq() {
   return new Groq({ apiKey: key });
 }
 
+/**
+ * Long single-sentence SMS texts get hard-wrapped by the Gmail/Google Voice
+ * relay around ~76 chars, landing as separate "lines" that aren't really
+ * separate. Merge trailing non-blank, non-quote lines back in so the full
+ * text survives instead of getting cut at the wrap point.
+ */
+function mergeWrappedLines(lines: string[], startIdx: number): string {
+  let merged = (lines[startIdx] || "").replace(/^>/, "").trim();
+  for (let j = startIdx + 1; j < lines.length; j++) {
+    const raw = lines[j] || "";
+    const next = raw.trim();
+    if (!next || /^On .+ wrote:$/.test(next) || /^>/.test(raw)) break;
+    merged += ` ${next}`;
+  }
+  return merged;
+}
+
 function shorthandText(message: string): string {
-  const line = message.trim().split("\n")[0]?.trim() || "";
+  const lines = message.trim().split("\n");
+  const line = mergeWrappedLines(lines, 0);
   if (line.length >= 2 && line[0] === line[line.length - 1] && `'\"`.includes(line[0])) {
     return line.slice(1, -1).trim();
   }
@@ -42,8 +60,9 @@ function shorthandText(message: string): string {
 }
 
 function findCommandLine(message: string): string | null {
-  for (const raw of message.replace(/\r\n/g, "\n").split("\n")) {
-    const line = raw.replace(/^>/, "").trim();
+  const lines = message.replace(/\r\n/g, "\n").split("\n");
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = (lines[idx] || "").replace(/^>/, "").trim();
     if (!line || /^On .+ wrote:$/.test(line)) continue;
     if (
       /^\.([a-z][\w-]*)\s*$/i.test(line) ||
@@ -59,7 +78,7 @@ function findCommandLine(message: string): string | null {
       /^what'?s left on (\.\w+)\s*$/i.test(line) ||
       /^clear\s+\.?[a-z][\w-]*(\s+list)?\s*$/i.test(line)
     ) {
-      return line;
+      return mergeWrappedLines(lines, idx);
     }
   }
   return null;
