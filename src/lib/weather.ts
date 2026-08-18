@@ -76,3 +76,54 @@ export async function formatWeatherText(daysAhead = 0): Promise<string> {
     return "Couldn't grab the weather just now — sorry!";
   }
 }
+
+/** Weather at a specific local hour today (for the morning briefing's "at 8am" line). */
+export async function formatWeatherAtHour(hour: number): Promise<string> {
+  try {
+    const settings = await db.getSettings();
+    const city =
+      settings.weatherCity?.trim() ||
+      process.env.WEATHER_CITY?.trim() ||
+      "Detroit";
+    const tz =
+      settings.timezone?.trim() ||
+      process.env.TIMEZONE?.trim() ||
+      "America/Detroit";
+    const [lat, lon] = await coords(city);
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&hourly=temperature_2m,weathercode,precipitation_probability` +
+      `&temperature_unit=fahrenheit` +
+      `&timezone=${encodeURIComponent(tz)}&forecast_days=1`;
+    const res = await fetch(url);
+    if (!res.ok) return "Couldn't grab the weather just now — sorry!";
+    const data = (await res.json()) as {
+      hourly?: {
+        time: string[];
+        temperature_2m: number[];
+        weathercode: number[];
+        precipitation_probability: number[];
+      };
+    };
+    const times = data.hourly?.time || [];
+    if (!times.length) return "Couldn't grab the weather just now — sorry!";
+    // Open-Meteo returns local wall-clock strings (no offset) when `timezone` is passed,
+    // so matching on the "THH:00" suffix picks the right hour regardless of DST.
+    const target = `T${String(hour).padStart(2, "0")}:00`;
+    let i = times.findIndex((t) => t.endsWith(target));
+    if (i < 0) i = 0;
+    const temp = Math.round(data.hourly!.temperature_2m[i] ?? 0);
+    const code = data.hourly!.weathercode[i] ?? 0;
+    const pop = data.hourly!.precipitation_probability[i] ?? 0;
+    const conditions = WMO[code] || "a mixed bag";
+    const hourLabel = hour === 0 ? "12am" : hour < 12 ? `${hour}am` : hour === 12 ? "12pm" : `${hour - 12}pm`;
+    const raining = RAIN.has(code) || pop >= 50;
+    if (raining) {
+      return `Weather in ${city} at ${hourLabel}: ${temp}F, ${conditions}. Rain expected — carry an umbrella! ☔`;
+    }
+    return `Weather in ${city} at ${hourLabel}: ${temp}F, ${conditions}. No rain expected.`;
+  } catch (e) {
+    console.error("formatWeatherAtHour failed", e);
+    return "Couldn't grab the weather just now — sorry!";
+  }
+}

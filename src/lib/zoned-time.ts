@@ -110,6 +110,24 @@ export function parseLocalIsoInTimezone(
   return { utc, normalized };
 }
 
+/** "8am", "8:30am", "12pm" — hour compact, minutes only when not on the hour. */
+export function formatCompactTime(date: Date, timeZone: string): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+      .formatToParts(date)
+      .map((p) => [p.type, p.value]),
+  );
+  const period = (parts.dayPeriod || "").toLowerCase().replace(/\./g, "");
+  return parts.minute === "00"
+    ? `${parts.hour}${period}`
+    : `${parts.hour}:${parts.minute}${period}`;
+}
+
 export function formatLocalDateTimeNice(
   date: Date,
   timeZone: string,

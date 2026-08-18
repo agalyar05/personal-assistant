@@ -11,10 +11,11 @@ import {
   sendUserReply,
 } from "./sms/gmail";
 import { getDueReminders, markReminderSent } from "./reminders";
-import { formatWeatherText } from "./weather";
+import { formatWeatherAtHour } from "./weather";
 import { calendar } from "./sms/gmail";
 import {
   addDaysYmd,
+  formatCompactTime,
   localHourMinute,
   wallTimeToUtc,
   ymdInTimezone,
@@ -45,7 +46,7 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   }
   log(`Sending morning briefing for ${today} (${tz})...`);
 
-  let calendarBlock = "Your calendar looks free today — nice breathing room.";
+  let calendarBlock = "Schedule today: nothing on your calendar — nice breathing room.";
   try {
     const cal = calendar();
     const start = wallTimeToUtc(today, 0, 0, tz);
@@ -62,20 +63,15 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
       (e) => !(e.summary || "").startsWith("SMS-"),
     );
     if (items.length) {
-      const lines = items.map((e, i) => {
+      // Exact event titles from Google Calendar — not reworded.
+      const lines = items.map((e) => {
         const raw = e.start?.dateTime || e.start?.date || "";
         const when = raw.includes("T")
-          ? new Date(raw).toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-              timeZone: tz,
-            })
+          ? formatCompactTime(new Date(raw), tz)
           : "All day";
-        return `${i + 1}. ${when} - ${e.summary || "(no title)"}`;
+        return `${when} - ${e.summary || "(no title)"}`;
       });
-      calendarBlock = ["Here's what's on your calendar today:", ...lines].join(
-        "\n",
-      );
+      calendarBlock = ["Schedule today:", ...lines].join("\n");
     }
   } catch (e) {
     log(`Calendar for briefing failed: ${e}`);
@@ -83,7 +79,7 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
       "Couldn't peek at your Google Calendar just now — I'll try again next time.";
   }
 
-  const weather = await formatWeatherText(0);
+  const weather = await formatWeatherAtHour(schedH);
 
   let dueBlock = "Nothing due today — enjoy the lighter load.";
   try {
@@ -111,12 +107,11 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   const dayNum = Number(today.replace(/-/g, "")) || 0;
   const closer = closers[dayNum % closers.length]!;
 
-  // Order: calendar → due → weather → closer. Short parts for GV reliability.
-  // Still pulls from Google Calendar primary via OAuth.
+  // Order: schedule → weather → due. Short parts for GV reliability.
   const parts = [
-    `Good morning!\n\nHope you slept well.\n\n${calendarBlock}`,
-    dueBlock,
-    `${weather}\n\n${closer}`,
+    `Good morning!\n\n${calendarBlock}`,
+    weather,
+    `${dueBlock}\n\n${closer}`,
   ];
   log(`Briefing parts: ${parts.map((p) => p.length).join(", ")} chars`);
   await sendSmsParts(parts);
