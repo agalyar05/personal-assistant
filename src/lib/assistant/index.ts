@@ -56,7 +56,8 @@ function findCommandLine(message: string): string | null {
       /^(due|what'?s due)\b/i.test(line) ||
       /^done\s+/i.test(line) ||
       /^-\s*.+/.test(line) ||
-      /^what'?s left on (\.\w+)\s*$/i.test(line)
+      /^what'?s left on (\.\w+)\s*$/i.test(line) ||
+      /^clear\s+\.?[a-z][\w-]*(\s+list)?\s*$/i.test(line)
     ) {
       return line;
     }
@@ -160,6 +161,15 @@ export async function tryMessageShorthand(
   }
   const left = text.match(/^what'?s left on (\.\w+)\s*$/i);
   if (left) return lists.smsParts(await lists.getListParts(left[1]));
+
+  const clearMatch = text.match(/^clear\s+\.?([a-z][\w-]*)(?:\s+list)?\s*$/i);
+  if (clearMatch) {
+    const n = lists.normalizeListName(clearMatch[1]);
+    const count = await db.clearList(n);
+    return count
+      ? `Success: cleared ${count} item(s) from '.${n}' list.`
+      : `Your '.${n}' list is already empty.`;
+  }
 
   const done = text.match(/^done\s+(.+?)(?:\s+on\s+(\.\w+))?\s*$/i);
   if (done) {

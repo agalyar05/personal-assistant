@@ -194,6 +194,24 @@ export function AssignmentSheet({
     };
   }, []);
 
+  useEffect(() => {
+    void (async () => {
+      const res = await fetch("/api/settings?slim=1");
+      const json = await res.json();
+      const saved = json.settings?.masterlistSheetSort as SortState | null;
+      if (saved) setSort(saved);
+    })();
+  }, []);
+
+  async function setPersistentSort(next: SortState | null) {
+    setSort(next);
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ masterlistSheetSort: next }),
+    });
+  }
+
   const courseLabel = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of courses) m.set(c.id, c.code || c.name);
@@ -1128,8 +1146,26 @@ export function AssignmentSheet({
         >
           Fill down
         </button>
+        <label className="text-xs text-[var(--muted)]">
+          Always sort by
+          <select
+            className="ml-1 rounded-md border border-[var(--line)] bg-white px-2 py-1"
+            value={sort?.key || "manual"}
+            onChange={(e) => {
+              const key = e.target.value;
+              void setPersistentSort(
+                key === "manual" ? null : { key: key as SortState["key"], dir: "asc" },
+              );
+            }}
+          >
+            <option value="manual">Manual (drag)</option>
+            <option value="dueAt">Due date</option>
+            <option value="courseId">Class</option>
+            <option value="status">Progress</option>
+          </select>
+        </label>
         <span className="hidden text-xs text-[var(--muted)] lg:inline">
-          Drag ▢ corner to fill · click Class / Due / Progress to sort
+          Drag ▢ corner to fill · click Class / Due / Progress to sort once
         </span>
       </div>
 

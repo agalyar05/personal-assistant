@@ -214,6 +214,17 @@ export default function TodoPage() {
     setSelected(new Set());
   }
 
+  async function clearAll() {
+    if (!confirm("Clear the entire .todo list?")) return;
+    await fetch("/api/lists", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ list_name: "todo", action: "clear" }),
+    });
+    setItems([]);
+    setMsg("Cleared .todo");
+  }
+
   async function deleteItem(id: string) {
     await fetch("/api/lists", {
       method: "POST",
@@ -299,6 +310,13 @@ export default function TodoPage() {
               )}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => void clearAll()}
+            className="shrink-0 rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs text-[var(--muted)] hover:border-red-300 hover:text-red-700"
+          >
+            Clear list
+          </button>
         </div>
         {msg && <p className="mt-2 text-xs text-[var(--muted)]">{msg}</p>}
       </section>

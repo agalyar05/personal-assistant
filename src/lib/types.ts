@@ -81,6 +81,11 @@ export type AppSettings = {
   pendingReminderMessage: string | null;
   /** User-dragged Kanban column order, keyed "todo" or "masterlist:<status|difficulty|class>". */
   kanbanColumnOrder: Record<string, string[]>;
+  /** Masterlist Sheet view's persistent sort, or null for manual (drag) order. */
+  masterlistSheetSort: {
+    key: "courseId" | "dueAt" | "status";
+    dir: "asc" | "desc";
+  } | null;
 };
 
 export type AssignmentStatus =
@@ -259,6 +264,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   taskHorizonDays: 7,
   pendingReminderMessage: null,
   kanbanColumnOrder: {},
+  masterlistSheetSort: null,
 };
 
 export const DEFAULT_STORE: Store = {
