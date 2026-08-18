@@ -46,7 +46,9 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   }
   log(`Sending morning briefing for ${today} (${tz})...`);
 
-  let calendarBlock = "Schedule today: nothing on your calendar — nice breathing room.";
+  // Each event gets its own SMS part (GV's outbound relay doesn't like
+  // multi-line/blank-line-joined bodies — see maybeMorningBriefing below).
+  let calendarParts = ["Schedule today: nothing on your calendar — nice breathing room."];
   try {
     const cal = calendar();
     const start = wallTimeToUtc(today, 0, 0, tz);
@@ -71,12 +73,13 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
           : "All day";
         return `${when} - ${e.summary || "(no title)"}`;
       });
-      calendarBlock = ["Schedule today:", ...lines].join("\n");
+      calendarParts = ["Schedule today:", ...lines];
     }
   } catch (e) {
     log(`Calendar for briefing failed: ${e}`);
-    calendarBlock =
-      "Couldn't peek at your Google Calendar just now — I'll try again next time.";
+    calendarParts = [
+      "Couldn't peek at your Google Calendar just now — I'll try again next time.",
+    ];
   }
 
   const weather = await formatWeatherAtHour(schedH);
@@ -107,12 +110,10 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   const dayNum = Number(today.replace(/-/g, "")) || 0;
   const closer = closers[dayNum % closers.length]!;
 
-  // Order: schedule → weather → due. Short parts for GV reliability.
-  const parts = [
-    `Good morning!\n\n${calendarBlock}`,
-    weather,
-    `${dueBlock}\n\n${closer}`,
-  ];
+  // Order: greeting → schedule (one SMS per event) → weather → due → closer.
+  // Blank-line-joined parts (e.g. "Good morning!\n\n...") were getting cut
+  // off by Google Voice's outbound relay, so keep every part single-block.
+  const parts = ["Good morning!", ...calendarParts, weather, dueBlock, closer];
   log(`Briefing parts: ${parts.map((p) => p.length).join(", ")} chars`);
   await sendSmsParts(parts);
   await db.updateSettings({ lastMorningBriefing: today });
