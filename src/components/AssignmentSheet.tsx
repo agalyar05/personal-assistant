@@ -752,7 +752,7 @@ export function AssignmentSheet({
         void clearSelection();
         return;
       }
-      // Type to overwrite — start editing
+      // Type to overwrite — start editing.
       if (e.key.length === 1 && !meta && !e.altKey) {
         setEditing(true);
       }
@@ -904,8 +904,10 @@ export function AssignmentSheet({
       else inputRefs.current.delete(key);
     };
 
+    // Match the display <div>'s min-h-[1.75rem] so entering edit mode doesn't
+    // change the row's height and shift everything while you're typing.
     const common =
-      "w-full bg-transparent px-0.5 py-0.5 text-sm outline-none";
+      "w-full min-h-[1.75rem] bg-transparent px-0.5 py-0.5 text-sm outline-none";
 
     if (col === "todo") {
       return (
