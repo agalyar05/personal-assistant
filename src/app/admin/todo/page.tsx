@@ -225,6 +225,23 @@ export default function TodoPage() {
     setMsg("Cleared .todo");
   }
 
+  async function clearDone() {
+    const doneItems = items.filter((i) => i.checked);
+    if (!doneItems.length) return;
+    if (!confirm(`Clear ${doneItems.length} done item(s)?`)) return;
+    await Promise.all(
+      doneItems.map((i) =>
+        fetch("/api/lists", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "remove", id: i.id }),
+        }),
+      ),
+    );
+    setItems((prev) => prev.filter((i) => !i.checked));
+    setMsg(`Cleared ${doneItems.length} done item(s)`);
+  }
+
   async function deleteItem(id: string) {
     await fetch("/api/lists", {
       method: "POST",
@@ -378,11 +395,25 @@ export default function TodoPage() {
                 setDragColId(null);
                 setOverCol(null);
               }}
-              className="mb-2 shrink-0 cursor-grab text-xs font-medium active:cursor-grabbing sm:text-sm"
+              className="mb-2 flex shrink-0 cursor-grab items-center justify-between gap-1 text-xs font-medium active:cursor-grabbing sm:text-sm"
               title="Drag to reorder columns"
             >
-              {col.label}{" "}
-              <span className="text-[var(--muted)]">({col.items.length})</span>
+              <span>
+                {col.label}{" "}
+                <span className="text-[var(--muted)]">({col.items.length})</span>
+              </span>
+              {col.id === "done" && col.items.length > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void clearDone();
+                  }}
+                  className="shrink-0 text-[10px] font-normal text-[var(--muted)] underline hover:text-red-700"
+                >
+                  Clear
+                </button>
+              )}
             </div>
             <input
               value={colText[col.id] || ""}

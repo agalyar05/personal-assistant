@@ -357,6 +357,14 @@ export async function getReminders(): Promise<Reminder[]> {
   return (data || []).map(rowToReminder);
 }
 
+/** Unlike getReminders(), this doesn't filter out already-sent reminders. */
+export async function getReminderById(id: string): Promise<Reminder | null> {
+  if (!hasSupabase()) return local.getReminderById(id);
+  const sb = client();
+  const { data } = await sb.from("reminders").select("*").eq("id", id).maybeSingle();
+  return data ? rowToReminder(data) : null;
+}
+
 function rowToReminder(row: Record<string, unknown>): Reminder {
   return {
     id: String(row.id),

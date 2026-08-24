@@ -412,6 +412,20 @@ export default function GroupsPage() {
                     );
                   })}
                 </div>
+                <input
+                  type="color"
+                  aria-label={`Pick a custom color for ${c.name}`}
+                  title="Pick any color"
+                  value={c.color || "#888888"}
+                  onChange={(e) =>
+                    void saveCourse({
+                      id: c.id,
+                      name: c.name,
+                      color: e.target.value,
+                    })
+                  }
+                  className="h-6 w-6 shrink-0 cursor-pointer rounded-full border-2 border-white/60 bg-transparent p-0"
+                />
                 {!isApplicationsGroup(c) && (
                   <button
                     type="button"

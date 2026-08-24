@@ -1781,7 +1781,6 @@ function KanbanView({
             type="button"
             className="block w-full px-3 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
             onClick={() => {
-              if (!confirm("Delete this row?")) return;
               onDelete(menu.id);
               setMenu(null);
               setSelected((prev) => {

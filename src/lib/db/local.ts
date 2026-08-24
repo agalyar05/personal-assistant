@@ -309,6 +309,12 @@ export async function getReminders(): Promise<Reminder[]> {
   return (await readStore()).reminders.filter((r) => !r.sent);
 }
 
+/** Unlike getReminders(), this doesn't filter out already-sent reminders. */
+export async function getReminderById(id: string): Promise<Reminder | null> {
+  const store = await readStore();
+  return store.reminders.find((r) => r.id === id) || null;
+}
+
 export async function addReminder(
   reminder: Omit<Reminder, "id" | "createdAt" | "sent" | "lastSent" | "snoozedUntil"> &
     Partial<Pick<Reminder, "sent" | "lastSent" | "snoozedUntil">>,

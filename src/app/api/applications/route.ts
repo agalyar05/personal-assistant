@@ -23,12 +23,17 @@ async function syncApplicationReminder(
   const message = applicationReminderMessage(app);
 
   if (app.reminderId) {
+    const existing = await db.getReminderById(app.reminderId);
+    // Only re-arm (clear sent) when the reminder time actually changed —
+    // otherwise an unrelated edit (sheet reorder, notes, status, etc.) would
+    // resend a reminder that already went out.
+    const timeChanged = !existing || existing.remindAt !== app.remindAt;
     const updated = await db.updateReminder(app.reminderId, {
       message,
       remindAt: app.remindAt,
       frequency: "once",
       fireTime: null,
-      sent: false,
+      ...(timeChanged ? { sent: false } : {}),
     });
     if (updated) return app;
   }

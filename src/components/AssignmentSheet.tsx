@@ -857,15 +857,6 @@ export function AssignmentSheet({
     const idxs = selectedRowIndexes();
     const ids = idxs.map((i) => rows[i]?.id).filter(Boolean) as string[];
     if (!ids.length) return;
-    if (
-      !confirm(
-        ids.length === 1
-          ? "Delete this row?"
-          : `Delete ${ids.length} rows?`,
-      )
-    ) {
-      return;
-    }
     for (const id of ids) await onDelete(id);
     onMsg(ids.length === 1 ? "Row deleted" : `${ids.length} rows deleted`);
     setActive(null);
@@ -1396,9 +1387,7 @@ export function AssignmentSheet({
                   <button
                     type="button"
                     className="text-[10px] text-red-700"
-                    onClick={() => {
-                      if (confirm("Delete this row?")) void onDelete(a.id);
-                    }}
+                    onClick={() => void onDelete(a.id)}
                   >
                     Del
                   </button>

@@ -161,26 +161,17 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${to(r)}${to(g)}${to(b)}`;
 }
 
-/** Theme-tuned hue bands — muted chips stay on-palette instead of rainbow. */
-const THEME_HUE_BAND: Record<ThemeId, { start: number; span: number }> = {
-  harbor: { start: 150, span: 130 }, // seafoam → deep teal → slate-blue
-  meadow: { start: 60, span: 115 }, // olive → leaf → pine
-  sunset: { start: 355, span: 75 }, // warm rose → clay → amber
-  slate: { start: 195, span: 115 }, // steel → ink-blue → soft violet
-  custom: { start: 160, span: 130 },
-};
-
 type HueBand = { start: number; span: number };
 
-function themeHueBand(theme: UiThemeSettings): HueBand {
-  if (theme.id === "custom") {
-    const accent = hexToHsl(resolveThemeColors(theme).accent);
-    return {
-      start: ((accent.h || 160) - 50 + 360) % 360,
-      span: 130,
-    };
-  }
-  return THEME_HUE_BAND[theme.id] || THEME_HUE_BAND.harbor;
+/**
+ * Full spectrum, red through dark purple (0°-280°) — every theme spreads
+ * class colors across the same wide range. Only saturation/lightness (see
+ * mutedChipParams) is theme-tuned, so chips still read as "on brand".
+ */
+const FULL_SPECTRUM_BAND: HueBand = { start: 0, span: 280 };
+
+function themeHueBand(_theme: UiThemeSettings): HueBand {
+  return FULL_SPECTRUM_BAND;
 }
 
 function mutedChipParams(theme: UiThemeSettings): { sat: number; lit: number } {
