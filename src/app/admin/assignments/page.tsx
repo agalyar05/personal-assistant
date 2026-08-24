@@ -18,6 +18,8 @@ import {
   isSubmittedStyle,
 } from "@/lib/types";
 import { CelebrationBurst } from "@/components/CelebrationBurst";
+import { UndoToast } from "@/components/UndoToast";
+import { useUndoToast } from "@/lib/useUndoToast";
 import { dueDateParts, formatDueDate, withinTaskHorizon } from "@/lib/fill";
 import {
   applyColumnOrder,
@@ -101,6 +103,8 @@ export default function AssignmentsPage() {
   const [taskHorizonDays, setTaskHorizonDays] = useState(7);
   const [msg, setMsg] = useState("");
   const [celebrate, setCelebrate] = useState(false);
+  const { pending: undoPending, offerUndo, runUndo, dismiss: dismissUndo } =
+    useUndoToast();
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -287,23 +291,70 @@ export default function AssignmentsPage() {
     }
   }
 
+  async function restoreAssignment(snapshot: Assignment) {
+    const { id: _id, createdAt: _createdAt, ...rest } = snapshot;
+    const res = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(rest),
+    });
+    if (!res.ok) {
+      setMsg("Undo failed");
+      return;
+    }
+    const created = (await res.json()).assignment as Assignment | undefined;
+    if (created) {
+      setAssignments((prev) => [...prev, { ...created, link: created.link || "" }]);
+    }
+    setMsg("Restored");
+  }
+
+  async function restoreApplication(snapshot: Application) {
+    // Drop reminderId — that reminder was tied to the deleted application's
+    // id, so a re-created reminder link would need to be set again.
+    const { id: _id, reminderId: _reminderId, createdAt: _createdAt, ...rest } =
+      snapshot;
+    const res = await fetch("/api/applications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(rest),
+    });
+    if (!res.ok) {
+      setMsg("Undo failed");
+      return;
+    }
+    const json = await res.json();
+    if (json.application) {
+      setApplications((prev) => [...prev, json.application as Application]);
+    }
+    setMsg("Restored");
+  }
+
   async function removeRow(id: string) {
     if (isAppSheetId(id)) {
       const realId = appIdFromSheetId(id);
+      const snapshot = applications.find((a) => a.id === realId);
       await fetch("/api/applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "delete", id: realId }),
       });
       setApplications((prev) => prev.filter((a) => a.id !== realId));
+      if (snapshot) {
+        offerUndo(`Deleted "${snapshot.title}"`, () => void restoreApplication(snapshot));
+      }
       return;
     }
+    const snapshot = assignments.find((a) => a.id === id);
     await fetch("/api/assignments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "delete", id }),
     });
     setAssignments((prev) => prev.filter((a) => a.id !== id));
+    if (snapshot) {
+      offerUndo(`Deleted "${snapshot.title}"`, () => void restoreAssignment(snapshot));
+    }
   }
 
   async function toggleTodo(id: string, onTodo: boolean) {
@@ -705,6 +756,13 @@ export default function AssignmentsPage() {
               );
             })();
           }}
+        />
+      )}
+      {undoPending && (
+        <UndoToast
+          label={undoPending.label}
+          onUndo={runUndo}
+          onDismiss={dismissUndo}
         />
       )}
     </div>

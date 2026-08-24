@@ -105,7 +105,7 @@ export function ThinkingSheet({
   }
 
   useEffect(() => {
-    if (editing) inputRef.current?.focus();
+    if (editing) inputRef.current?.focus({ preventScroll: true });
   }, [editing, active?.row, active?.col]);
 
   useEffect(() => {
@@ -238,21 +238,21 @@ export function ThinkingSheet({
         if (e.key === "Escape") {
           e.preventDefault();
           setEditing(false);
-          sheetRef.current?.focus();
+          sheetRef.current?.focus({ preventScroll: true });
           return;
         }
         if (e.key === "Enter") {
           e.preventDefault();
           commitDraft();
           moveActive(e.shiftKey ? -1 : 1, 0, false);
-          sheetRef.current?.focus();
+          sheetRef.current?.focus({ preventScroll: true });
           return;
         }
         if (e.key === "Tab") {
           e.preventDefault();
           commitDraft();
           moveActive(0, e.shiftKey ? -1 : 1, false);
-          sheetRef.current?.focus();
+          sheetRef.current?.focus({ preventScroll: true });
           return;
         }
         return;
@@ -479,7 +479,7 @@ export function ThinkingSheet({
                       onMouseDown={(e) => {
                         if (e.button !== 0) return;
                         e.preventDefault();
-                        sheetRef.current?.focus();
+                        sheetRef.current?.focus({ preventScroll: true });
                         if (editing && active) commitDraft();
                         if (e.shiftKey && active) {
                           selectCell(pos, { shift: true });

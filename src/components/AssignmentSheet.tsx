@@ -431,7 +431,7 @@ export function AssignmentSheet({
   function focusActiveInput() {
     if (!active) return;
     const el = inputRefs.current.get(cellKey(active.row, active.col));
-    el?.focus();
+    el?.focus({ preventScroll: true });
     if (skipSelectOnFocusRef.current) {
       skipSelectOnFocusRef.current = false;
       if (el && "setSelectionRange" in el) {
@@ -783,21 +783,21 @@ export function AssignmentSheet({
         if (e.key === "Escape") {
           e.preventDefault();
           setEditing(false);
-          sheetRef.current?.focus();
+          sheetRef.current?.focus({ preventScroll: true });
           return;
         }
         if (e.key === "Enter") {
           e.preventDefault();
           setEditing(false);
           moveActive(e.shiftKey ? -1 : 1, 0, false);
-          sheetRef.current?.focus();
+          sheetRef.current?.focus({ preventScroll: true });
           return;
         }
         if (e.key === "Tab") {
           e.preventDefault();
           setEditing(false);
           moveActive(0, e.shiftKey ? -1 : 1, false);
-          sheetRef.current?.focus();
+          sheetRef.current?.focus({ preventScroll: true });
           return;
         }
         return;
@@ -1453,7 +1453,7 @@ export function AssignmentSheet({
                           return;
                         }
                         e.preventDefault();
-                        sheetRef.current?.focus();
+                        sheetRef.current?.focus({ preventScroll: true });
                         if (e.shiftKey && active) {
                           selectCell(pos, { shift: true, edit: false });
                           return;

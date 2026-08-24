@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ListDifficulty, ListItem } from "@/lib/types";
 import { CelebrationBurst } from "@/components/CelebrationBurst";
+import { UndoToast } from "@/components/UndoToast";
 import {
   applyColumnOrder,
   KANBAN_COLUMN_DRAG_TYPE,
@@ -12,6 +13,7 @@ import {
   kanbanColumnClass,
   reorderColumnIds,
 } from "@/lib/kanban-layout";
+import { useUndoToast } from "@/lib/useUndoToast";
 
 type ColumnId = ListDifficulty | "done";
 
@@ -36,6 +38,8 @@ export default function TodoPage() {
   const [items, setItems] = useState<ListItem[]>([]);
   const [colText, setColText] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
+  const { pending: undoPending, offerUndo, runUndo, dismiss: dismissUndo } =
+    useUndoToast();
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overCol, setOverCol] = useState<ColumnId | null>(null);
   const [overItemId, setOverItemId] = useState<string | null>(null);
@@ -214,8 +218,38 @@ export default function TodoPage() {
     setSelected(new Set());
   }
 
+  /** Re-adds items verbatim, grouped by (checked, difficulty) to minimize round-trips. */
+  async function restoreItems(snapshot: ListItem[]) {
+    const groups = new Map<string, ListItem[]>();
+    for (const item of snapshot) {
+      const sig = item.checked ? "checked" : `d:${item.difficulty}`;
+      const list = groups.get(sig) || [];
+      list.push(item);
+      groups.set(sig, list);
+    }
+    for (const group of groups.values()) {
+      const first = group[0]!;
+      const body: Record<string, unknown> = {
+        list_name: "todo",
+        items: group.map((i) => i.text),
+      };
+      if (first.checked) body.checked = true;
+      else if (first.difficulty && first.difficulty !== "unassigned") {
+        body.difficulty = first.difficulty;
+      }
+      await fetch("/api/lists", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+    await load();
+    setMsg("Restored");
+  }
+
   async function clearAll() {
-    if (!confirm("Clear the entire .todo list?")) return;
+    const snapshot = items;
+    if (!snapshot.length) return;
     await fetch("/api/lists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -223,12 +257,14 @@ export default function TodoPage() {
     });
     setItems([]);
     setMsg("Cleared .todo");
+    offerUndo(`Cleared .todo (${snapshot.length} items)`, () =>
+      void restoreItems(snapshot),
+    );
   }
 
   async function clearDone() {
     const doneItems = items.filter((i) => i.checked);
     if (!doneItems.length) return;
-    if (!confirm(`Clear ${doneItems.length} done item(s)?`)) return;
     await Promise.all(
       doneItems.map((i) =>
         fetch("/api/lists", {
@@ -240,15 +276,22 @@ export default function TodoPage() {
     );
     setItems((prev) => prev.filter((i) => !i.checked));
     setMsg(`Cleared ${doneItems.length} done item(s)`);
+    offerUndo(`Cleared ${doneItems.length} done item(s)`, () =>
+      void restoreItems(doneItems),
+    );
   }
 
   async function deleteItem(id: string) {
+    const snapshot = items.find((i) => i.id === id);
     await fetch("/api/lists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "remove", id }),
     });
     setItems((prev) => prev.filter((i) => i.id !== id));
+    if (snapshot) {
+      offerUndo(`Deleted "${snapshot.text}"`, () => void restoreItems([snapshot]));
+    }
   }
 
   async function renameItem(id: string, text: string) {
@@ -576,6 +619,13 @@ export default function TodoPage() {
             Delete
           </button>
         </div>
+      )}
+      {undoPending && (
+        <UndoToast
+          label={undoPending.label}
+          onUndo={runUndo}
+          onDismiss={dismissUndo}
+        />
       )}
     </div>
   );
