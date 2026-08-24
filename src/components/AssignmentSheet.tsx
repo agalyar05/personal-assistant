@@ -60,6 +60,7 @@ const COL_META: { key: ColKey; label: string; width: string }[] = [
 const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 const STORAGE_KEY = "pa_assignment_columns";
 const SORTABLE_COLS = new Set<ColKey>(["courseId", "dueAt", "status"]);
+const TEXT_EDIT_COLS = new Set<ColKey>(["title", "link", "assignmentType", "notes"]);
 
 type FillMode = "auto" | "daily" | "weekly" | "monthly";
 type CellPos = { row: number; col: number };
@@ -162,7 +163,7 @@ export function AssignmentSheet({
   const [anchor, setAnchor] = useState<CellPos | null>(null);
   const [editing, setEditing] = useState(false);
   const [fillMode, setFillMode] = useState<FillMode>("weekly");
-  const [fillCount, setFillCount] = useState(5);
+  const [fillCount, setFillCount] = useState("5");
   const [fillDragging, setFillDragging] = useState(false);
   const [rangeDragging, setRangeDragging] = useState(false);
   const [dragRowIdx, setDragRowIdx] = useState<number | null>(null);
@@ -185,6 +186,10 @@ export function AssignmentSheet({
   );
   const headerDraggedRef = useRef(false);
   const blurTimersRef = useRef<Set<number>>(new Set());
+  // Set right before entering edit mode via direct typing (seeded with the
+  // first character) — skips the normal select-all-on-focus so the next
+  // keystroke appends instead of replacing what was just typed.
+  const skipSelectOnFocusRef = useRef(false);
 
   useEffect(() => {
     const timers = blurTimersRef.current;
@@ -356,6 +361,18 @@ export function AssignmentSheet({
     if (!active) return;
     const el = inputRefs.current.get(cellKey(active.row, active.col));
     el?.focus();
+    if (skipSelectOnFocusRef.current) {
+      skipSelectOnFocusRef.current = false;
+      if (el && "setSelectionRange" in el) {
+        try {
+          const len = (el as HTMLInputElement).value.length;
+          (el as HTMLInputElement).setSelectionRange(len, len);
+        } catch {
+          /* setSelectionRange on some input types can throw */
+        }
+      }
+      return;
+    }
     if (el && "select" in el && typeof el.select === "function") {
       try {
         el.select();
@@ -752,8 +769,28 @@ export function AssignmentSheet({
         void clearSelection();
         return;
       }
-      // Type to overwrite — start editing.
+      // Type to overwrite — start editing. Explicitly seed the new value
+      // (rather than relying on native select-then-type, which races with
+      // the deferred focus effect below) and preventDefault so the keystroke
+      // doesn't also fall through to the browser's default handling on the
+      // still-focused sheet div — that stray default action is what was
+      // scrolling the page on some keys instead of typing into the cell.
       if (e.key.length === 1 && !meta && !e.altKey) {
+        e.preventDefault();
+        const col = cols[active.col];
+        const row = rows[active.row];
+        if (row && col && TEXT_EDIT_COLS.has(col)) {
+          const field =
+            col === "title"
+              ? "title"
+              : col === "link"
+                ? "link"
+                : col === "assignmentType"
+                  ? "assignmentType"
+                  : "notes";
+          onChangeLocal(row.id, { [field]: e.key });
+          skipSelectOnFocusRef.current = true;
+        }
         setEditing(true);
       }
     },
@@ -1127,14 +1164,19 @@ export function AssignmentSheet({
             max={50}
             className="ml-1 w-14 rounded-md border border-[var(--line)] bg-white px-2 py-1"
             value={fillCount}
-            onChange={(e) =>
-              setFillCount(Math.max(1, Math.min(50, Number(e.target.value) || 1)))
-            }
+            onChange={(e) => setFillCount(e.target.value)}
+            onBlur={() => {
+              if (fillCount === "") setFillCount("5");
+            }}
           />
         </label>
         <button
           type="button"
-          onClick={() => void fillDownFromActive(fillCount)}
+          onClick={() =>
+            void fillDownFromActive(
+              Math.max(1, Math.min(50, Number(fillCount) || 5)),
+            )
+          }
           className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm"
         >
           Fill down

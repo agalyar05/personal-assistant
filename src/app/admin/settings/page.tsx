@@ -27,10 +27,12 @@ export default function SettingsPage() {
   const { theme, saveTheme } = useUiTheme();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [saved, setSaved] = useState("");
+  const [taskHorizonInput, setTaskHorizonInput] = useState("7");
 
   async function load() {
     const res = await fetch("/api/settings");
     const json = await res.json();
+    const horizon = Number(json.settings?.taskHorizonDays ?? 7);
     setSettings({
       ...json.settings,
       uiTheme: json.settings?.uiTheme || {
@@ -38,8 +40,9 @@ export default function SettingsPage() {
         custom: { ...DEFAULT_THEME_CUSTOM },
       },
       weatherCity: json.settings?.weatherCity || "Detroit",
-      taskHorizonDays: Number(json.settings?.taskHorizonDays ?? 7),
+      taskHorizonDays: horizon,
     });
+    setTaskHorizonInput(String(horizon));
   }
 
   useEffect(() => {
@@ -53,14 +56,16 @@ export default function SettingsPage() {
       body: JSON.stringify(patch),
     });
     const json = await res.json();
+    const horizon = Number(
+      json.settings?.taskHorizonDays ?? settings?.taskHorizonDays ?? 7,
+    );
     setSettings({
       ...json.settings,
       uiTheme: json.settings?.uiTheme || theme,
       weatherCity: json.settings?.weatherCity || "Detroit",
-      taskHorizonDays: Number(
-        json.settings?.taskHorizonDays ?? settings?.taskHorizonDays ?? 7,
-      ),
+      taskHorizonDays: horizon,
     });
+    setTaskHorizonInput(String(horizon));
     setSaved("Saved");
     setTimeout(() => setSaved(""), 2000);
   }
@@ -133,13 +138,24 @@ export default function SettingsPage() {
               min={0}
               max={365}
               className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2"
-              value={settings.taskHorizonDays}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  taskHorizonDays: Math.max(0, Number(e.target.value) || 0),
-                })
-              }
+              value={taskHorizonInput}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setTaskHorizonInput(raw);
+                if (raw === "") return;
+                const n = Number(raw);
+                if (!Number.isNaN(n)) {
+                  setSettings({
+                    ...settings,
+                    taskHorizonDays: Math.max(0, Math.min(365, n)),
+                  });
+                }
+              }}
+              onBlur={() => {
+                if (taskHorizonInput === "") {
+                  setTaskHorizonInput(String(settings.taskHorizonDays));
+                }
+              }}
             />
             <span className="mt-1 block text-xs text-[var(--muted)]">
               Masterlist sheet / agenda / kanban only show tasks due within this

@@ -338,33 +338,19 @@ export default function AssignmentsPage() {
   }
 
   async function insertRowAt(index: number, where: "above" | "below") {
-    // `visible` (sheetRows) interleaves synthetic application rows among real
-    // assignments; `ordered` holds only real assignments, which is what sortOrder
-    // actually indexes. When the anchor is an app row, insertAt is derived by walking
-    // back to the nearest real assignment before the cut point — app rows have no
-    // sortOrder slot of their own to insert relative to.
-    const ordered = [...assignments].sort(
-      (a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
-    );
+    // Insert into the FULL visible sheet order (assignments + synthetic
+    // application rows) and renumber that whole list, same as drag-reorder
+    // does via bulkSave. Renumbering only real assignments (as this used to)
+    // left application rows' sortOrder stale relative to the freshly
+    // renumbered assignments, so rows near the assignment/application
+    // boundary would swap places the next time they collided on a value.
     const visible = sheetRows;
     const anchor = visible[index];
-    let insertAt = ordered.length;
-    if (anchor) {
-      if (isAppSheetId(anchor.id)) {
-        const cut = where === "above" ? index : index + 1;
-        const before = visible
-          .slice(0, cut)
-          .filter((r) => !isAppSheetId(r.id));
-        const lastAsn = before[before.length - 1];
-        insertAt = lastAsn
-          ? ordered.findIndex((a) => a.id === lastAsn.id) + 1
-          : 0;
-      } else {
-        const fullIdx = ordered.findIndex((a) => a.id === anchor.id);
-        insertAt = where === "above" ? fullIdx : fullIdx + 1;
-      }
-    }
-    insertAt = Math.max(0, Math.min(ordered.length, insertAt));
+    const insertAt = anchor
+      ? where === "above"
+        ? index
+        : index + 1
+      : visible.length;
 
     const res = await fetch("/api/assignments", {
       method: "POST",
@@ -387,7 +373,7 @@ export default function AssignmentsPage() {
       await refreshRows();
       return;
     }
-    const next = [...ordered];
+    const next = [...visible];
     next.splice(insertAt, 0, created);
     await bulkSave(
       next.map((row, i) => ({
