@@ -57,8 +57,24 @@ const COL_META: { key: ColKey; label: string; width: string }[] = [
   { key: "notes", label: "Notes", width: "min-w-[140px]" },
 ];
 
+const DEFAULT_COL_WIDTHS: Record<ColKey, number> = {
+  title: 200,
+  link: 160,
+  courseId: 120,
+  todo: 64,
+  status: 130,
+  dueAt: 130,
+  assignmentType: 110,
+  difficulty: 100,
+  pointsEarned: 72,
+  pointsPossible: 72,
+  notes: 140,
+};
+const MIN_COL_WIDTH = 48;
+
 const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 const STORAGE_KEY = "pa_assignment_columns";
+const WIDTH_STORAGE_KEY = "pa_assignment_col_widths";
 const SORTABLE_COLS = new Set<ColKey>(["courseId", "dueAt", "status"]);
 const TEXT_EDIT_COLS = new Set<ColKey>(["title", "link", "assignmentType", "notes"]);
 
@@ -158,6 +174,20 @@ export function AssignmentSheet({
   onMsg: (msg: string) => void;
 }) {
   const [cols, setCols] = useState<ColKey[]>(() => COL_META.map((c) => c.key));
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    if (typeof window === "undefined") return { ...DEFAULT_COL_WIDTHS };
+    try {
+      const raw = window.localStorage.getItem(WIDTH_STORAGE_KEY);
+      if (!raw) return { ...DEFAULT_COL_WIDTHS };
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      return { ...DEFAULT_COL_WIDTHS, ...parsed };
+    } catch {
+      return { ...DEFAULT_COL_WIDTHS };
+    }
+  });
+  const resizingRef = useRef<{ col: ColKey; startX: number; startWidth: number } | null>(
+    null,
+  );
   const [dragCol, setDragCol] = useState<ColKey | null>(null);
   const [active, setActive] = useState<CellPos | null>(null);
   const [anchor, setAnchor] = useState<CellPos | null>(null);
@@ -257,6 +287,47 @@ export function AssignmentSheet({
   function persistCols(next: ColKey[]) {
     setCols(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }
+
+  function persistColWidths(next: Record<string, number>) {
+    setColWidths(next);
+    try {
+      localStorage.setItem(WIDTH_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function startColumnResize(col: ColKey, e: ReactMouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = {
+      col,
+      startX: e.clientX,
+      startWidth: colWidths[col] ?? DEFAULT_COL_WIDTHS[col],
+    };
+    function onMove(ev: MouseEvent) {
+      const state = resizingRef.current;
+      if (!state) return;
+      const next = Math.max(
+        MIN_COL_WIDTH,
+        state.startWidth + (ev.clientX - state.startX),
+      );
+      setColWidths((prev) => ({ ...prev, [state.col]: next }));
+    }
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      const state = resizingRef.current;
+      resizingRef.current = null;
+      if (!state) return;
+      setColWidths((prev) => {
+        persistColWidths(prev);
+        return prev;
+      });
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }
 
   const metaByKey = useMemo(
@@ -1216,7 +1287,20 @@ export function AssignmentSheet({
         }}
         className="max-h-[min(75vh,900px)] overflow-auto outline-none focus:ring-1 focus:ring-[var(--accent)]/40"
       >
-        <table className="min-w-[1200px] w-full border-collapse text-sm select-none">
+        <table
+          className="border-collapse text-sm select-none"
+          style={{ tableLayout: "fixed" }}
+        >
+          <colgroup>
+            <col style={{ width: 40 }} />
+            {cols.map((key) => (
+              <col
+                key={key}
+                style={{ width: colWidths[key] ?? DEFAULT_COL_WIDTHS[key] }}
+              />
+            ))}
+            <col />
+          </colgroup>
           <thead className="sticky top-0 z-20 bg-[var(--card)]">
             <tr>
               <th className="sticky left-0 z-30 w-10 border-b border-r border-[var(--line)] bg-[var(--card)] px-1 py-1.5 text-center text-[10px] font-medium text-[var(--muted)]">
@@ -1243,7 +1327,7 @@ export function AssignmentSheet({
                       if (headerDraggedRef.current) return;
                       if (sortable) void sortByColumn(key);
                     }}
-                    className={`border-b border-r border-[var(--line)] bg-[var(--card)] px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] ${meta.width} ${
+                    className={`relative border-b border-r border-[var(--line)] bg-[var(--card)] px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] overflow-hidden ${
                       sortable
                         ? "cursor-pointer select-none hover:text-[var(--ink)]"
                         : "cursor-grab active:cursor-grabbing"
@@ -1254,7 +1338,7 @@ export function AssignmentSheet({
                         : "Drag to reorder columns"
                     }
                   >
-                    <span className="inline-flex items-center gap-1">
+                    <span className="inline-flex items-center gap-1 truncate">
                       {meta.label}
                       {sortable && (
                         <span
@@ -1271,6 +1355,13 @@ export function AssignmentSheet({
                         </span>
                       )}
                     </span>
+                    <span
+                      draggable={false}
+                      onMouseDown={(e) => startColumnResize(key, e)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize select-none hover:bg-[var(--accent)]/40"
+                      title="Drag to resize column"
+                    />
                   </th>
                 );
               })}
