@@ -164,7 +164,7 @@ export function AssignmentSheet({
   onInsertRow: (
     index: number,
     where: "above" | "below",
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   onDelete: (id: string) => Promise<void>;
   onBulk: (
     rows: (Partial<Assignment> & { title?: string; id?: string })[],

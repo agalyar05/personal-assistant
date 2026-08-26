@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Application,
   ApplicationKind,
@@ -105,6 +105,17 @@ export default function AssignmentsPage() {
   const [celebrate, setCelebrate] = useState(false);
   const { pending: undoPending, offerUndo, runUndo, dismiss: dismissUndo } =
     useUndoToast();
+  // Successive "+ Row" clicks within this window stack downward from the
+  // 4th position instead of each one jumping back to row 4.
+  const lastAddRowRef = useRef<{ index: number; at: number } | null>(null);
+  // Serializes addBlankRow calls so a rapid second click can't read a stale
+  // sheetRows snapshot from before the first insert finished.
+  const addRowChainRef = useRef<Promise<void>>(Promise.resolve());
+  // Manually-tracked sheet order for a rapid-click "+ Row" streak — React
+  // may not have re-rendered (so `sheetRows` is still stale) between two
+  // clicks that arrive faster than a render cycle, so the streak keeps its
+  // own up-to-date copy instead of relying on the memoized value.
+  const streakOrderRef = useRef<Assignment[] | null>(null);
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -384,18 +395,47 @@ export default function AssignmentsPage() {
   }
 
   /** "+ Row" always inserts at the 4th visible position, not appended at the end. */
-  async function addBlankRow() {
-    await insertRowAt(3, "above");
+  function addBlankRow(): Promise<void> {
+    const ADD_STREAK_WINDOW_MS = 30_000;
+    const run = async () => {
+      const now = Date.now();
+      const last = lastAddRowRef.current;
+      const withinStreak = Boolean(last && now - last.at < ADD_STREAK_WINDOW_MS);
+      const index = withinStreak ? last!.index + 1 : 3;
+      const baseOrder =
+        withinStreak && streakOrderRef.current ? streakOrderRef.current : sheetRows;
+      // Update synchronously, before awaiting, so a second click that
+      // arrives before this insert's network round-trip finishes still
+      // sees the incremented index/order instead of racing back to the same one.
+      lastAddRowRef.current = { index, at: now };
+      const created = await insertRowAt(index, "above", baseOrder);
+      if (created) {
+        const nextOrder = [...baseOrder];
+        nextOrder.splice(index, 0, created);
+        streakOrderRef.current = nextOrder;
+      }
+    };
+    // Chained rather than run directly so a rapid second click can't start
+    // before the first insert's network round-trip finishes.
+    const next = addRowChainRef.current.then(run, run);
+    addRowChainRef.current = next;
+    return next;
   }
 
-  async function insertRowAt(index: number, where: "above" | "below") {
+  async function insertRowAt(
+    index: number,
+    where: "above" | "below",
+    baseOrder?: Assignment[],
+  ): Promise<Assignment | null> {
     // Insert into the FULL visible sheet order (assignments + synthetic
     // application rows) and renumber that whole list, same as drag-reorder
     // does via bulkSave. Renumbering only real assignments (as this used to)
     // left application rows' sortOrder stale relative to the freshly
     // renumbered assignments, so rows near the assignment/application
     // boundary would swap places the next time they collided on a value.
-    const visible = sheetRows;
+    // `baseOrder` lets a rapid-click streak (see addBlankRow) pass its own
+    // up-to-date order instead of the possibly-stale `sheetRows` closure.
+    const visible = baseOrder ?? sheetRows;
     const anchor = visible[index];
     const insertAt = anchor
       ? where === "above"
@@ -417,12 +457,12 @@ export default function AssignmentsPage() {
     });
     if (!res.ok) {
       setMsg("Could not insert row");
-      return;
+      return null;
     }
     const created = (await res.json()).assignment as Assignment | undefined;
     if (!created?.id) {
       await refreshRows();
-      return;
+      return null;
     }
     const next = [...visible];
     next.splice(insertAt, 0, created);
@@ -434,6 +474,7 @@ export default function AssignmentsPage() {
       })),
     );
     setMsg(where === "above" ? "Row inserted above" : "Row inserted below");
+    return created;
   }
 
   async function addInKanbanColumn(columnId: string, title = "New assignment") {
