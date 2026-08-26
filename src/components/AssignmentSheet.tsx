@@ -196,7 +196,14 @@ export function AssignmentSheet({
   const [fillCount, setFillCount] = useState("5");
   const [fillDragging, setFillDragging] = useState(false);
   const [rangeDragging, setRangeDragging] = useState(false);
-  const [dragRowIdx, setDragRowIdx] = useState<number | null>(null);
+  // The full set of row indexes being dragged together — a single row, or
+  // every row in the active multi-row selection when the drag started on a
+  // row that was already part of it.
+  const [dragRowSet, setDragRowSet] = useState<number[] | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{
+    rowIdx: number;
+    edge: "above" | "below";
+  } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
     y: number;
@@ -906,13 +913,7 @@ export function AssignmentSheet({
     };
   }, [ctxMenu]);
 
-  async function reorderRows(fromIdx: number, toIdx: number) {
-    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
-    if (toIdx >= rows.length) return;
-    const next = [...rows];
-    const [moved] = next.splice(fromIdx, 1);
-    if (!moved) return;
-    next.splice(toIdx, 0, moved);
+  async function commitRowOrder(next: Assignment[]) {
     const patchRows = next.map((row, i) => ({
       id: row.id,
       title: row.title,
@@ -924,6 +925,40 @@ export function AssignmentSheet({
     setSort(null);
     await onBulk(patchRows, { keepLocal: true });
     onMsg("Rows reordered");
+  }
+
+  async function reorderRows(fromIdx: number, toIdx: number) {
+    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
+    if (toIdx >= rows.length) return;
+    const next = [...rows];
+    const [moved] = next.splice(fromIdx, 1);
+    if (!moved) return;
+    next.splice(toIdx, 0, moved);
+    await commitRowOrder(next);
+  }
+
+  /** Drags every row in `fromIndexes` together, dropping them as a block
+   * just above or below the row currently at `toIdx`. */
+  async function reorderRowBlock(
+    fromIndexes: number[],
+    toIdx: number,
+    edge: "above" | "below",
+  ) {
+    const fromSet = new Set(fromIndexes);
+    if (fromSet.has(toIdx) || toIdx < 0 || toIdx >= rows.length) return;
+    const anchorRow = rows[toIdx];
+    const movedRows = fromIndexes
+      .slice()
+      .sort((a, b) => a - b)
+      .map((i) => rows[i])
+      .filter((r): r is Assignment => Boolean(r));
+    if (!movedRows.length) return;
+    const remaining = rows.filter((_, i) => !fromSet.has(i));
+    const insertAt =
+      remaining.indexOf(anchorRow) + (edge === "below" ? 1 : 0);
+    const next = [...remaining];
+    next.splice(insertAt, 0, ...movedRows);
+    await commitRowOrder(next);
   }
 
   async function sortByColumn(key: ColKey) {
@@ -1377,15 +1412,30 @@ export function AssignmentSheet({
                 key={a.id}
                 onContextMenu={(e) => openRowMenu(e, rowIdx)}
                 onDragOver={(e) => {
-                  if (dragRowIdx == null) return;
+                  if (dragRowSet == null) return;
                   e.preventDefault();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const edge: "above" | "below" =
+                    e.clientY < rect.top + rect.height / 2 ? "above" : "below";
+                  setDropIndicator((prev) =>
+                    prev?.rowIdx === rowIdx && prev.edge === edge
+                      ? prev
+                      : { rowIdx, edge },
+                  );
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (dragRowIdx == null) return;
-                  const from = dragRowIdx;
-                  setDragRowIdx(null);
-                  void reorderRows(from, rowIdx);
+                  if (dragRowSet == null) return;
+                  const from = dragRowSet;
+                  // Compute edge fresh from the drop event's own coordinates
+                  // rather than trusting the last dragover's state — a drop
+                  // can in principle land before that render flushes.
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const edge: "above" | "below" =
+                    e.clientY < rect.top + rect.height / 2 ? "above" : "below";
+                  setDragRowSet(null);
+                  setDropIndicator(null);
+                  void reorderRowBlock(from, rowIdx, edge);
                 }}
                 className={`${
                   !rowTint
@@ -1397,20 +1447,58 @@ export function AssignmentSheet({
                   isSubmittedStyle(a.status)
                     ? "text-[var(--muted)] line-through opacity-70"
                     : ""
-                } ${dragRowIdx === rowIdx ? "opacity-50" : ""}`}
+                } ${dragRowSet?.includes(rowIdx) ? "opacity-50" : ""}`}
                 style={rowTint ? { backgroundColor: rowTint } : undefined}
               >
                 <td
                   draggable
+                  onMouseDown={(e) => {
+                    if (e.shiftKey && active) {
+                      setAnchor(anchor ?? { row: active.row, col: 0 });
+                      setActive({ row: rowIdx, col: cols.length - 1 });
+                    } else {
+                      setActive({ row: rowIdx, col: 0 });
+                      setAnchor({ row: rowIdx, col: cols.length - 1 });
+                    }
+                    setEditing(false);
+                  }}
                   onDragStart={(e) => {
-                    setDragRowIdx(rowIdx);
+                    const selRows =
+                      selection && selection.r1 > selection.r0
+                        ? Array.from(
+                            { length: selection.r1 - selection.r0 + 1 },
+                            (_, i) => selection.r0 + i,
+                          )
+                        : [];
+                    const set = selRows.includes(rowIdx) ? selRows : [rowIdx];
+                    setDragRowSet(set);
                     e.dataTransfer.effectAllowed = "move";
                     e.dataTransfer.setData("text/plain", String(rowIdx));
                   }}
-                  onDragEnd={() => setDragRowIdx(null)}
-                  className="sticky left-0 z-10 cursor-grab border-b border-r border-[var(--line)] px-1 py-0 text-center font-mono text-[10px] text-[var(--muted)] active:cursor-grabbing"
+                  onDragEnd={() => {
+                    setDragRowSet(null);
+                    setDropIndicator(null);
+                  }}
+                  className={`sticky left-0 z-10 cursor-grab border-b border-r border-r-[var(--line)] px-1 py-0 text-center font-mono text-[10px] text-[var(--muted)] active:cursor-grabbing ${
+                    dropIndicator?.rowIdx === rowIdx &&
+                    dropIndicator.edge === "above"
+                      ? "border-t-2 border-t-[var(--accent)]"
+                      : "border-t border-t-transparent"
+                  } ${
+                    dropIndicator?.rowIdx === rowIdx &&
+                    dropIndicator.edge === "below"
+                      ? "border-b-2 border-b-[var(--accent)]"
+                      : "border-b-[var(--line)]"
+                  } ${
+                    selection &&
+                    selection.r1 > selection.r0 &&
+                    rowIdx >= selection.r0 &&
+                    rowIdx <= selection.r1
+                      ? "!bg-[var(--accent)]/20"
+                      : ""
+                  }`}
                   style={{ backgroundColor: rowTint || "var(--card)" }}
-                  title="Drag to reorder · right-click for menu"
+                  title="Drag to reorder (drag a multi-row selection to move it together) · right-click for menu"
                 >
                   {rowIdx + 1}
                 </td>
