@@ -44,6 +44,15 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
     log("Morning briefing already sent today.");
     return;
   }
+  // Claim today's briefing before sending anything, not after. The send loop
+  // below is many sequential SMS parts (each ~1.5s apart plus its own Gmail
+  // API round trip), which can outlast the external cron's 1–2 min interval.
+  // Marking done only at the end left a window where a second cron tick,
+  // still seeing "not sent today", would start its own concurrent send loop —
+  // two interleaved bursts to the same GV thread, landing in whatever order
+  // Gmail happened to process each individual send in, not the order either
+  // loop intended (this is what caused events to arrive out of sequence).
+  await db.updateSettings({ lastMorningBriefing: today });
   log(`Sending morning briefing for ${today} (${tz})...`);
 
   // Each event gets its own SMS part (GV's outbound relay doesn't like
@@ -116,7 +125,6 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   const parts = ["Good morning!", ...calendarParts, weather, dueBlock, closer];
   log(`Briefing parts: ${parts.map((p) => p.length).join(", ")} chars`);
   await sendSmsParts(parts);
-  await db.updateSettings({ lastMorningBriefing: today });
   log("Morning briefing sent.");
 }
 
