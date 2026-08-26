@@ -210,7 +210,12 @@ export async function tryMessageShorthand(
   }
 
   const show = text.match(/^\.([a-z][\w-]*)\s*$/i);
-  if (show) return lists.smsParts(await lists.getListParts(show[1]));
+  if (show) {
+    const name = lists.normalizeListName(show[1]);
+    return lists.smsParts(
+      await lists.getListParts(name, { unassignedOnly: name === "todo" }),
+    );
+  }
 
   const add = text.match(/^\.([a-z][\w-]*)\s*:?\s+(.+)$/i);
   if (add) {

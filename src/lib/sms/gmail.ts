@@ -45,7 +45,14 @@ function decodeBody(payload: {
   }
   if (payload.mimeType === "text/html" && payload.body?.data) {
     const html = Buffer.from(payload.body.data, "base64url").toString("utf8");
-    return html.replace(/<[^>]+>/g, " ");
+    // Insert newlines at block-level boundaries before stripping tags, so an
+    // HTML-only email keeps the same line structure a text/plain part would
+    // have — without it everything (message + footer boilerplate) collapses
+    // into one run-on line and the boilerplate-stripping regex below can
+    // never find the newline it splits on.
+    return html
+      .replace(/<(br|\/p|\/div|\/tr|\/li|\/h[1-6])[^>]*>/gi, "\n")
+      .replace(/<[^>]+>/g, " ");
   }
   for (const part of payload.parts || []) {
     const text = decodeBody(part as typeof payload);
@@ -61,6 +68,13 @@ export function extractInboundSmsText(message: string): string {
   // so the boilerplate (help center / legal footer) doesn't leak into the body.
   text = text.split(
     /\n(?:To respond to this (?:text )?message|Sent from my|Get the Google Voice|Text Message|Text Messaging|Standard messaging rates)/i,
+  )[0].trim();
+  // A second, newer GV footer variant ("YOUR ACCOUNT / HELP CENTER / HELP
+  // FORUM / This email was sent to you because…") isn't newline-anchored to
+  // a fixed lead-in the way the one above is, so match on its distinctive
+  // phrases directly instead of requiring a preceding newline.
+  text = text.split(
+    /\s*(?:YOUR ACCOUNT\s*<|HELP CENTER\s*<|HELP FORUM\s*<|This email was sent to you because)/i,
   )[0].trim();
 
   const cleanLines = (block: string) =>

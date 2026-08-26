@@ -71,10 +71,20 @@ export async function addToList(
   return formatAddConfirmation(`.${name}`, added.map((a) => a.text), skipped);
 }
 
-export async function getListParts(listName = ""): Promise<string[]> {
+export async function getListParts(
+  listName = "",
+  opts?: { unassignedOnly?: boolean },
+): Promise<string[]> {
   const name = normalizeListName(listName) || DEFAULT_GROCERY;
-  const items = (await db.getListItems(name)).filter((i) => !i.checked);
-  if (!items.length) return [`Your '.${name}' list is empty.`];
+  let items = (await db.getListItems(name)).filter((i) => !i.checked);
+  if (opts?.unassignedOnly) {
+    items = items.filter((i) => i.difficulty === "unassigned");
+  }
+  if (!items.length) {
+    return opts?.unassignedOnly
+      ? [`Nothing unassigned on '.${name}' — it's all sorted! 🎉`]
+      : [`Your '.${name}' list is empty.`];
+  }
 
   if (name === DEFAULT_GROCERY) {
     const byAisle: Record<string, string[]> = {};
@@ -105,7 +115,9 @@ export async function getListParts(listName = ""): Promise<string[]> {
   }
 
   return [
-    `Your '.${name}' list:`,
+    opts?.unassignedOnly
+      ? `Your '.${name}' unassigned list:`
+      : `Your '.${name}' list:`,
     ...items.map((item, i) => `${i + 1}. ${item.text}`),
   ];
 }
