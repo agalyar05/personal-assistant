@@ -62,6 +62,9 @@ type WeekStart = 0 | 1; // 0 = Sunday, 1 = Monday
 
 const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 const WEEK_START_KEY = "pa_cal_week_start";
+/** Month view shows this many consecutive months, stacked and scrollable,
+ * instead of paging one month at a time. */
+const CAL_MONTHS_SHOWN = 6;
 const CAL_RANGE_KEY = "pa_cal_range";
 const DEFAULT_VIEW_KEY = "pa_masterlist_default_view";
 const APP_CLOSED = new Set(["accepted", "rejected", "withdrawn"]);
@@ -1155,20 +1158,33 @@ function CalendarView({
   const weekStart = startOfWeek(weekAnchor, weekStartsOn);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
-  const monthCells = useMemo(() => {
-    const first = new Date(year, mo, 1);
+  function buildMonthCells(y: number, m: number): (Date | null)[] {
+    const first = new Date(y, m, 1);
     const lead = (first.getDay() - weekStartsOn + 7) % 7;
-    const daysInMonth = new Date(year, mo + 1, 0).getDate();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
     const cells: (Date | null)[] = [
       ...Array.from({ length: lead }, () => null),
-      ...Array.from(
-        { length: daysInMonth },
-        (_, i) => new Date(year, mo, i + 1),
-      ),
+      ...Array.from({ length: daysInMonth }, (_, i) => new Date(y, m, i + 1)),
     ];
     while (cells.length % 7) cells.push(null);
     return cells;
-  }, [year, mo, weekStartsOn]);
+  }
+
+  // Month view shows several consecutive months stacked in one scrollable
+  // column instead of paging one at a time.
+  const monthWindow = useMemo(
+    () =>
+      Array.from({ length: CAL_MONTHS_SHOWN }, (_, i) => {
+        const d = new Date(year, mo + i, 1);
+        return {
+          year: d.getFullYear(),
+          mo: d.getMonth(),
+          cells: buildMonthCells(d.getFullYear(), d.getMonth()),
+        };
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [year, mo, weekStartsOn],
+  );
 
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [overYmd, setOverYmd] = useState<string | null>(null);
@@ -1241,12 +1257,20 @@ function CalendarView({
           day: "numeric",
           year: "numeric",
         })}`
-      : month.toLocaleString("en-US", { month: "long", year: "numeric" });
+      : `${month.toLocaleString("en-US", { month: "long", year: "numeric" })} – ${new Date(
+          year,
+          mo + CAL_MONTHS_SHOWN - 1,
+          1,
+        ).toLocaleString("en-US", { month: "long", year: "numeric" })}`;
 
   const todayYmd = toYmd(new Date());
   const labels = weekdayLabels(weekStartsOn);
 
-  function renderDayCell(day: Date | null, key: string | number) {
+  function renderDayCell(
+    day: Date | null,
+    key: string | number,
+    blockMo: number = mo,
+  ) {
     if (!day) {
       return (
         <div
@@ -1261,7 +1285,7 @@ function CalendarView({
     const dayAssignments = assignmentsForYmd(ymd);
     const dayApps = appsForYmd(ymd);
     const isToday = ymd === todayYmd;
-    const inMonth = day.getMonth() === mo;
+    const inMonth = day.getMonth() === blockMo;
 
     return (
       <div
@@ -1464,24 +1488,38 @@ function CalendarView({
           </>
         )}
       </p>
-      {calRange === "month" && (
-        <div className="grid grid-cols-7 gap-px text-center text-xs text-[var(--muted)]">
-          {labels.map((d) => (
-            <div key={d} className="py-2 font-medium">
-              {d}
-            </div>
-          ))}
+      {calRange === "month" ? (
+        <>
+          <div className="grid grid-cols-7 gap-px text-center text-xs text-[var(--muted)]">
+            {labels.map((d) => (
+              <div key={d} className="py-2 font-medium">
+                {d}
+              </div>
+            ))}
+          </div>
+          <div className="max-h-[75vh] overflow-y-auto pr-1">
+            {monthWindow.map(({ year: blockYear, mo: blockMo, cells }) => (
+              <div key={`${blockYear}-${blockMo}`} className="mb-5">
+                <h4 className="mb-1.5 text-center text-sm font-semibold text-[var(--ink)]">
+                  {new Date(blockYear, blockMo, 1).toLocaleString("en-US", {
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </h4>
+                <div className="grid grid-cols-7 gap-px bg-[var(--line)]">
+                  {cells.map((d, i) =>
+                    renderDayCell(d, `${blockYear}-${blockMo}-${i}`, blockMo),
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="grid min-h-[70vh] grid-cols-1 gap-px bg-[var(--line)] sm:grid-cols-7">
+          {weekDays.map((d) => renderDayCell(d, toYmd(d)))}
         </div>
       )}
-      <div
-        className={`grid gap-px bg-[var(--line)] ${
-          calRange === "week" ? "grid-cols-1 sm:grid-cols-7" : "grid-cols-7"
-        } ${calRange === "week" ? "min-h-[70vh]" : ""}`}
-      >
-        {calRange === "week"
-          ? weekDays.map((d) => renderDayCell(d, toYmd(d)))
-          : monthCells.map((d, i) => renderDayCell(d, i))}
-      </div>
     </section>
   );
 }
