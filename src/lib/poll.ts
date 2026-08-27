@@ -55,8 +55,12 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
   await db.updateSettings({ lastMorningBriefing: today });
   log(`Sending morning briefing for ${today} (${tz})...`);
 
-  // Each event gets its own SMS part (GV's outbound relay doesn't like
-  // multi-line/blank-line-joined bodies — see maybeMorningBriefing below).
+  // One SMS for the whole schedule (single-\n lines, no blank lines — GV's
+  // outbound relay only chokes on blank-line-joined bodies, not this). Each
+  // event used to get its own SMS part, but Gmail → Google Voice doesn't
+  // guarantee those arrive in the order they were sent, so events could show
+  // up scrambled on the phone even though we send them correctly in order.
+  // One atomic message has no cross-message order for GV to get wrong.
   let calendarParts = ["Schedule today: nothing on your calendar — nice breathing room."];
   try {
     const cal = calendar();
@@ -82,7 +86,7 @@ async function maybeMorningBriefing(opts?: { force?: boolean }): Promise<void> {
           : "All day";
         return `${when} - ${e.summary || "(no title)"}`;
       });
-      calendarParts = ["Schedule today:", ...lines];
+      calendarParts = [["Schedule today:", ...lines].join("\n")];
     }
   } catch (e) {
     log(`Calendar for briefing failed: ${e}`);
