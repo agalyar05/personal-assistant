@@ -1500,7 +1500,7 @@ function CalendarView({
           <div className="max-h-[75vh] overflow-y-auto pr-1">
             {monthWindow.map(({ year: blockYear, mo: blockMo, cells }) => (
               <div key={`${blockYear}-${blockMo}`} className="mb-5">
-                <h4 className="mb-1.5 text-center text-sm font-semibold text-[var(--ink)]">
+                <h4 className="mb-1.5 rounded-md bg-[var(--accent-soft)] py-1 text-center text-sm font-semibold text-[var(--ink)]">
                   {new Date(blockYear, blockMo, 1).toLocaleString("en-US", {
                     month: "long",
                     year: "numeric",
