@@ -77,6 +77,8 @@ export type AppSettings = {
   thinkingSheet: ThinkingSheetData;
   /** Show tasks due within this many days (overdue + undated always). 0 = all. Calendar ignores this. */
   taskHorizonDays: number;
+  /** Bold a task if it's overdue, due today, or due within this many days. */
+  dueSoonBoldDays: number;
   /** Reminder text waiting for a time from the user (SMS follow-up). */
   pendingReminderMessage: string | null;
   /** User-dragged Kanban column order, keyed "todo" or "masterlist:<status|difficulty|class>". */
@@ -262,6 +264,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     cells: {},
   },
   taskHorizonDays: 7,
+  dueSoonBoldDays: 1,
   pendingReminderMessage: null,
   kanbanColumnOrder: {},
   masterlistSheetSort: null,

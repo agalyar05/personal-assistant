@@ -101,6 +101,7 @@ export default function AssignmentsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [taskHorizonDays, setTaskHorizonDays] = useState(7);
+  const [dueSoonBoldDays, setDueSoonBoldDays] = useState(1);
   const [msg, setMsg] = useState("");
   const [celebrate, setCelebrate] = useState(false);
   const { pending: undoPending, offerUndo, runUndo, dismiss: dismissUndo } =
@@ -145,6 +146,7 @@ export default function AssignmentsPage() {
     if (sRes.ok) {
       const sJson = await sRes.json();
       setTaskHorizonDays(Number(sJson.settings?.taskHorizonDays ?? 7));
+      setDueSoonBoldDays(Number(sJson.settings?.dueSoonBoldDays ?? 1));
     }
   }, []);
 
@@ -653,6 +655,7 @@ export default function AssignmentsPage() {
         <AssignmentSheet
           assignments={sheetRows}
           courses={courses}
+          dueSoonBoldDays={dueSoonBoldDays}
           onChangeLocal={(id, patch) => {
             if (isAppSheetId(id)) {
               const realId = appIdFromSheetId(id);

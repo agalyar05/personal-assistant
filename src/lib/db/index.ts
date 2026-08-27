@@ -110,6 +110,10 @@ export async function getSettings(): Promise<AppSettings> {
       0,
       Math.min(365, Number(payload.taskHorizonDays ?? DEFAULT_SETTINGS.taskHorizonDays)),
     ),
+    dueSoonBoldDays: Math.max(
+      0,
+      Math.min(365, Number(payload.dueSoonBoldDays ?? DEFAULT_SETTINGS.dueSoonBoldDays)),
+    ),
   };
 }
 

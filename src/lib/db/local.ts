@@ -56,6 +56,9 @@ async function readStore(): Promise<Store> {
         taskHorizonDays:
           parsed.settings?.taskHorizonDays ??
           DEFAULT_STORE.settings.taskHorizonDays,
+        dueSoonBoldDays:
+          parsed.settings?.dueSoonBoldDays ??
+          DEFAULT_STORE.settings.dueSoonBoldDays,
       },
       listItems: (parsed.listItems || []).map((i) => ({
         ...i,

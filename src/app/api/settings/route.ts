@@ -35,6 +35,7 @@ export async function GET(req: Request) {
         uiTheme: settings.uiTheme,
         cronControl: settings.cronControl,
         taskHorizonDays: settings.taskHorizonDays,
+        dueSoonBoldDays: settings.dueSoonBoldDays,
         kanbanColumnOrder: settings.kanbanColumnOrder,
         masterlistSheetSort: settings.masterlistSheetSort,
       },
@@ -62,6 +63,7 @@ export async function PUT(req: Request) {
     uiTheme?: UiThemeSettings;
     dashboardLayout?: DashboardLayout;
     taskHorizonDays?: number;
+    dueSoonBoldDays?: number;
     liveHours?: number;
     endLive?: boolean;
     kanbanColumnOrder?: Record<string, string[]>;
@@ -108,6 +110,11 @@ export async function PUT(req: Request) {
   } else {
     patch.taskHorizonDays = current.taskHorizonDays;
   }
+  if (body.dueSoonBoldDays !== undefined) {
+    patch.dueSoonBoldDays = Math.max(0, Math.min(365, Number(body.dueSoonBoldDays) || 0));
+  } else {
+    patch.dueSoonBoldDays = current.dueSoonBoldDays;
+  }
   if (body.kanbanColumnOrder !== undefined) {
     patch.kanbanColumnOrder = body.kanbanColumnOrder;
   }
@@ -125,6 +132,7 @@ export async function PUT(req: Request) {
       uiTheme: settings.uiTheme,
       cronControl: settings.cronControl,
       taskHorizonDays: settings.taskHorizonDays,
+      dueSoonBoldDays: settings.dueSoonBoldDays,
       kanbanColumnOrder: settings.kanbanColumnOrder,
       masterlistSheetSort: settings.masterlistSheetSort,
     },

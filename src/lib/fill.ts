@@ -195,3 +195,18 @@ export function withinTaskHorizon(
   end.setDate(end.getDate() + horizonDays);
   return due.getTime() <= end.getTime();
 }
+
+/** Whether a task is overdue, due today, or due within `days` days. */
+export function isDueSoon(
+  dueAt: string | null,
+  days: number,
+  now = new Date(),
+): boolean {
+  if (!dueAt) return false;
+  const p = dueDateParts(dueAt);
+  if (!p) return false;
+  const due = new Date(p.year, p.month, p.day, 12, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  end.setDate(end.getDate() + Math.max(0, days));
+  return due.getTime() <= end.getTime();
+}

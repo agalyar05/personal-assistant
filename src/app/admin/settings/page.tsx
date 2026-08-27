@@ -12,6 +12,7 @@ type Settings = {
   weeklyBriefingDay: string;
   weeklyBriefingTime: string;
   taskHorizonDays: number;
+  dueSoonBoldDays: number;
   uiTheme: UiThemeSettings;
   cronControl: {
     mode: "off" | "always" | "window";
@@ -28,11 +29,13 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [saved, setSaved] = useState("");
   const [taskHorizonInput, setTaskHorizonInput] = useState("7");
+  const [dueSoonBoldInput, setDueSoonBoldInput] = useState("1");
 
   async function load() {
     const res = await fetch("/api/settings");
     const json = await res.json();
     const horizon = Number(json.settings?.taskHorizonDays ?? 7);
+    const dueSoonBold = Number(json.settings?.dueSoonBoldDays ?? 1);
     setSettings({
       ...json.settings,
       uiTheme: json.settings?.uiTheme || {
@@ -41,8 +44,10 @@ export default function SettingsPage() {
       },
       weatherCity: json.settings?.weatherCity || "Detroit",
       taskHorizonDays: horizon,
+      dueSoonBoldDays: dueSoonBold,
     });
     setTaskHorizonInput(String(horizon));
+    setDueSoonBoldInput(String(dueSoonBold));
   }
 
   useEffect(() => {
@@ -59,13 +64,18 @@ export default function SettingsPage() {
     const horizon = Number(
       json.settings?.taskHorizonDays ?? settings?.taskHorizonDays ?? 7,
     );
+    const dueSoonBold = Number(
+      json.settings?.dueSoonBoldDays ?? settings?.dueSoonBoldDays ?? 1,
+    );
     setSettings({
       ...json.settings,
       uiTheme: json.settings?.uiTheme || theme,
       weatherCity: json.settings?.weatherCity || "Detroit",
       taskHorizonDays: horizon,
+      dueSoonBoldDays: dueSoonBold,
     });
     setTaskHorizonInput(String(horizon));
+    setDueSoonBoldInput(String(dueSoonBold));
     setSaved("Saved");
     setTimeout(() => setSaved(""), 2000);
   }
@@ -163,6 +173,38 @@ export default function SettingsPage() {
               everything. Use 0 for all tasks.
             </span>
           </label>
+          <label className="text-sm sm:col-span-2">
+            Bold tasks due within (days)
+            <input
+              type="number"
+              min={0}
+              max={365}
+              className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2"
+              value={dueSoonBoldInput}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setDueSoonBoldInput(raw);
+                if (raw === "") return;
+                const n = Number(raw);
+                if (!Number.isNaN(n)) {
+                  setSettings({
+                    ...settings,
+                    dueSoonBoldDays: Math.max(0, Math.min(365, n)),
+                  });
+                }
+              }}
+              onBlur={() => {
+                if (dueSoonBoldInput === "") {
+                  setDueSoonBoldInput(String(settings.dueSoonBoldDays));
+                }
+              }}
+            />
+            <span className="mt-1 block text-xs text-[var(--muted)]">
+              Masterlist bolds a task if it&apos;s overdue, due today, or due
+              within this many days. Use 0 to only bold overdue &amp; due
+              today.
+            </span>
+          </label>
         </div>
         <button
           type="button"
@@ -173,6 +215,7 @@ export default function SettingsPage() {
               weatherCity: settings.weatherCity,
               morningBriefingTime: settings.morningBriefingTime,
               taskHorizonDays: settings.taskHorizonDays,
+              dueSoonBoldDays: settings.dueSoonBoldDays,
               cronControl: { ...cc, timezone: settings.timezone },
             })
           }

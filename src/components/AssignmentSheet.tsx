@@ -14,6 +14,7 @@ import {
   fillDateSeries,
   fillTitleSeries,
   fromInputDate,
+  isDueSoon,
   toInputDate,
 } from "@/lib/fill";
 import type {
@@ -26,6 +27,7 @@ import {
   ASSIGNMENT_DIFFICULTIES,
   ASSIGNMENT_STATUSES,
   ASSIGNMENT_STATUS_LABELS,
+  isClosedAssignmentStatus,
   isSubmittedStyle,
 } from "@/lib/types";
 import { faintClassTint } from "@/lib/themes";
@@ -145,6 +147,7 @@ function inRange(pos: CellPos, a: CellPos, b: CellPos) {
 export function AssignmentSheet({
   assignments,
   courses,
+  dueSoonBoldDays,
   onChangeLocal,
   onApplySortOrders,
   onPatch,
@@ -157,6 +160,8 @@ export function AssignmentSheet({
 }: {
   assignments: Assignment[];
   courses: Course[];
+  /** Bold a row if its due date is overdue, today, or within this many days. */
+  dueSoonBoldDays: number;
   onChangeLocal: (id: string, patch: Partial<Assignment>) => void;
   onApplySortOrders: (orders: { id: string; sortOrder: number }[]) => void;
   onPatch: (patch: Partial<Assignment> & { id: string }) => Promise<void>;
@@ -1446,6 +1451,11 @@ export function AssignmentSheet({
                 } ${
                   isSubmittedStyle(a.status)
                     ? "text-[var(--muted)] line-through opacity-70"
+                    : ""
+                } ${
+                  !isClosedAssignmentStatus(a.status) &&
+                  isDueSoon(a.dueAt, dueSoonBoldDays)
+                    ? "font-bold"
                     : ""
                 } ${dragRowSet?.includes(rowIdx) ? "opacity-50" : ""}`}
                 style={rowTint ? { backgroundColor: rowTint } : undefined}
