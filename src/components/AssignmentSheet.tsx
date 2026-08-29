@@ -157,6 +157,7 @@ export function AssignmentSheet({
   onBulk,
   onToggleTodo,
   onMsg,
+  offerUndo,
 }: {
   assignments: Assignment[];
   courses: Course[];
@@ -174,8 +175,9 @@ export function AssignmentSheet({
   onBulk: (
     rows: (Partial<Assignment> & { title?: string; id?: string })[],
     opts?: { keepLocal?: boolean },
-  ) => Promise<void>;
+  ) => Promise<Assignment[] | void>;
   onToggleTodo: (id: string, onTodo: boolean) => Promise<void>;
+  offerUndo: (label: string, run: () => void) => void;
   onMsg: (msg: string) => void;
 }) {
   const [cols, setCols] = useState<ColKey[]>(() => COL_META.map((c) => c.key));
@@ -617,6 +619,22 @@ export function AssignmentSheet({
       return patch;
     }
 
+    // The filled column's CURRENT value on an existing row, for undo.
+    function currentColValue(row: Assignment): Partial<Assignment> {
+      if (col === "title") return { title: row.title };
+      if (col === "dueAt") return { dueAt: row.dueAt };
+      const patch: Partial<Assignment> = {};
+      if (col === "courseId") patch.courseId = row.courseId;
+      else if (col === "status") patch.status = row.status;
+      else if (col === "link") patch.link = row.link;
+      else if (col === "assignmentType") patch.assignmentType = row.assignmentType;
+      else if (col === "difficulty") patch.difficulty = row.difficulty;
+      else if (col === "pointsEarned") patch.pointsEarned = row.pointsEarned;
+      else if (col === "pointsPossible") patch.pointsPossible = row.pointsPossible;
+      else if (col === "notes") patch.notes = row.notes;
+      return patch;
+    }
+
     // The rest of a brand-new row's fields, before colPatch layers the
     // filled column's own pattern on top.
     function newRowBase(i: number): Partial<Assignment> & { title: string } {
@@ -649,9 +667,11 @@ export function AssignmentSheet({
       // Only patch rows already below the active cell — stop at the first
       // gap instead of creating new ones.
       const patchRows: (Partial<Assignment> & { id: string })[] = [];
+      const beforeRows: (Partial<Assignment> & { id: string })[] = [];
       for (let i = 0; i < count; i++) {
         const existing = rows[active.row + i];
         if (!existing) break;
+        beforeRows.push({ id: existing.id, ...currentColValue(existing) });
         patchRows.push({ id: existing.id, ...colPatch(i) });
       }
       if (!patchRows.length) {
@@ -659,9 +679,9 @@ export function AssignmentSheet({
         return;
       }
       await onBulk(patchRows);
-      onMsg(
-        `Filled ${patchRows.length} ${metaByKey.get(col)?.label || col} cell(s)`,
-      );
+      const label = `Filled ${patchRows.length} ${metaByKey.get(col)?.label || col} cell(s)`;
+      onMsg(label);
+      offerUndo(label, () => void onBulk(beforeRows));
       return;
     }
 
@@ -670,6 +690,11 @@ export function AssignmentSheet({
     // can't collide with rows already below (a naive seed.sortOrder + i
     // assignment would, whenever the active row isn't at the very bottom).
     const insertAt = active.row + 1;
+    // Pre-fill sortOrder snapshot, for undo — restores every existing row
+    // to exactly where it was before the insert shifted things down.
+    const beforeRows: (Partial<Assignment> & { id: string })[] = rows.map(
+      (row) => ({ id: row.id, title: row.title, sortOrder: row.sortOrder }),
+    );
     const patchRows: (Partial<Assignment> & { title?: string; id?: string })[] =
       rows.map((row, i) => ({
         id: row.id,
@@ -683,8 +708,21 @@ export function AssignmentSheet({
         sortOrder: insertAt + 1 + i,
       });
     }
-    await onBulk(patchRows);
-    onMsg(`Created ${count} new row(s)`);
+    const result = await onBulk(patchRows);
+    const label = `Created ${count} new row(s)`;
+    onMsg(label);
+    // The new rows are appended after all existing ones in `patchRows`, and
+    // filtering/upserting preserves that relative order, so the response's
+    // last `count` entries are exactly the newly created rows.
+    const created = Array.isArray(result) ? result.slice(-count) : [];
+    if (created.length) {
+      offerUndo(label, () => {
+        void (async () => {
+          for (const c of created) await onDelete(c.id);
+          await onBulk(beforeRows);
+        })();
+      });
+    }
   }
 
   async function fillCtrlD() {

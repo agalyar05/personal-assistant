@@ -529,7 +529,7 @@ export default function AssignmentsPage() {
   async function bulkSave(
     rows: (Partial<Assignment> & { title?: string; id?: string })[],
     opts?: { keepLocal?: boolean },
-  ) {
+  ): Promise<Assignment[] | void> {
     const appRows = rows.filter((r) => r.id && isAppSheetId(r.id));
     const asnRows = rows.filter((r) => !r.id || !isAppSheetId(r.id));
     // Independent per-application updates — no shared state between them.
@@ -570,7 +570,7 @@ export default function AssignmentsPage() {
           }
           return merged;
         });
-        return;
+        return json.assignments as Assignment[];
       }
     }
     if (!opts?.keepLocal) await refreshRows();
@@ -659,6 +659,7 @@ export default function AssignmentsPage() {
           assignments={sheetRows}
           courses={courses}
           dueSoonBoldDays={dueSoonBoldDays}
+          offerUndo={offerUndo}
           onChangeLocal={(id, patch) => {
             if (isAppSheetId(id)) {
               const realId = appIdFromSheetId(id);
