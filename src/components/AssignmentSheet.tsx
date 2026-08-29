@@ -199,6 +199,9 @@ export function AssignmentSheet({
   const [editing, setEditing] = useState(false);
   const [fillMode, setFillMode] = useState<FillMode>("weekly");
   const [fillCount, setFillCount] = useState("5");
+  // "existing" only fills rows already below the active cell (stops at the
+  // first gap); "new" always inserts that many brand-new rows instead.
+  const [fillTarget, setFillTarget] = useState<"existing" | "new">("existing");
   const [fillDragging, setFillDragging] = useState(false);
   const [rangeDragging, setRangeDragging] = useState(false);
   // The full set of row indexes being dragged together — a single row, or
@@ -576,99 +579,112 @@ export function AssignmentSheet({
       onMsg("Select a cell first");
       return;
     }
-    // Also create new rows if needed via existing bulk path for title/due
     const seed = rows[active.row];
     if (!seed) return;
     const col = cols[active.col]!;
+    if (col === "todo") {
+      onMsg("Use the .todo checkbox on each row");
+      return;
+    }
     const titles = fillTitleSeries(seed.title, count);
-    const patchRows: (Partial<Assignment> & { title?: string; id?: string })[] =
-      [];
+    const dueDates =
+      col === "dueAt"
+        ? fillDateSeries(
+            [
+              toInputDate(seed.dueAt),
+              toInputDate(rows[active.row + 1]?.dueAt || null),
+            ],
+            count,
+            fillMode,
+          )
+        : null;
 
-    if (col === "title") {
+    // The filled column's value for the i-th row.
+    function colPatch(i: number): Partial<Assignment> {
+      if (col === "title") return { title: titles[i]! };
+      if (col === "dueAt") return { dueAt: fromInputDate(dueDates![i] || "") };
+      const patch: Partial<Assignment> = {};
+      if (col === "courseId") patch.courseId = seed.courseId;
+      else if (col === "status") patch.status = seed.status;
+      else if (col === "link") patch.link = seed.link;
+      else if (col === "assignmentType")
+        patch.assignmentType = seed.assignmentType;
+      else if (col === "difficulty") patch.difficulty = seed.difficulty;
+      else if (col === "pointsEarned") patch.pointsEarned = seed.pointsEarned;
+      else if (col === "pointsPossible")
+        patch.pointsPossible = seed.pointsPossible;
+      else if (col === "notes") patch.notes = seed.notes;
+      return patch;
+    }
+
+    // The rest of a brand-new row's fields, before colPatch layers the
+    // filled column's own pattern on top.
+    function newRowBase(i: number): Partial<Assignment> & { title: string } {
+      if (col === "dueAt") {
+        return {
+          title: titles[i] || `${seed.title} ${i + 1}`,
+          courseId: seed.courseId,
+          status: "not_started",
+          dueAt: seed.dueAt,
+          link: "",
+          assignmentType: seed.assignmentType,
+          difficulty: seed.difficulty,
+        };
+      }
+      return {
+        title: titles[i] || `${seed.title} ${i + 1}`,
+        courseId: seed.courseId,
+        status: seed.status,
+        dueAt: seed.dueAt,
+        link: seed.link,
+        assignmentType: seed.assignmentType,
+        difficulty: seed.difficulty,
+        pointsEarned: seed.pointsEarned,
+        pointsPossible: seed.pointsPossible,
+        notes: seed.notes,
+      };
+    }
+
+    if (fillTarget === "existing") {
+      // Only patch rows already below the active cell — stop at the first
+      // gap instead of creating new ones.
+      const patchRows: (Partial<Assignment> & { id: string })[] = [];
       for (let i = 0; i < count; i++) {
         const existing = rows[active.row + i];
-        if (existing) patchRows.push({ id: existing.id, title: titles[i]! });
-        else {
-          patchRows.push({
-            title: titles[i]!,
-            courseId: seed.courseId,
-            status: seed.status,
-            link: seed.link,
-            assignmentType: seed.assignmentType,
-            difficulty: seed.difficulty,
-            pointsEarned: seed.pointsEarned,
-            pointsPossible: seed.pointsPossible,
-            notes: seed.notes,
-            dueAt: seed.dueAt,
-            sortOrder: (seed.sortOrder || active.row + 1) + i,
-          });
-        }
+        if (!existing) break;
+        patchRows.push({ id: existing.id, ...colPatch(i) });
       }
-    } else if (col === "dueAt") {
-      const dates = fillDateSeries(
-        [
-          toInputDate(seed.dueAt),
-          toInputDate(rows[active.row + 1]?.dueAt || null),
-        ],
-        count,
-        fillMode,
-      );
-      for (let i = 0; i < count; i++) {
-        const existing = rows[active.row + i];
-        const dueAt = fromInputDate(dates[i] || "");
-        if (existing) patchRows.push({ id: existing.id, dueAt });
-        else {
-          patchRows.push({
-            title: titles[i] || `${seed.title} ${i + 1}`,
-            courseId: seed.courseId,
-            status: "not_started",
-            dueAt,
-            link: "",
-            assignmentType: seed.assignmentType,
-            difficulty: seed.difficulty,
-            sortOrder: (seed.sortOrder || active.row + 1) + i,
-          });
-        }
-      }
-    } else {
-      if (col === "todo") {
-        onMsg("Use the .todo checkbox on each row");
+      if (!patchRows.length) {
+        onMsg("No existing rows below to fill");
         return;
       }
-      for (let i = 0; i < count; i++) {
-        const existing = rows[active.row + i];
-        const patch: Partial<Assignment> = {};
-        if (col === "courseId") patch.courseId = seed.courseId;
-        else if (col === "status") patch.status = seed.status;
-        else if (col === "link") patch.link = seed.link;
-        else if (col === "assignmentType")
-          patch.assignmentType = seed.assignmentType;
-        else if (col === "difficulty") patch.difficulty = seed.difficulty;
-        else if (col === "pointsEarned") patch.pointsEarned = seed.pointsEarned;
-        else if (col === "pointsPossible")
-          patch.pointsPossible = seed.pointsPossible;
-        else if (col === "notes") patch.notes = seed.notes;
-        if (existing) patchRows.push({ id: existing.id, ...patch });
-        else {
-          patchRows.push({
-            title: titles[i] || `${seed.title} ${i + 1}`,
-            courseId: seed.courseId,
-            status: seed.status,
-            dueAt: seed.dueAt,
-            link: seed.link,
-            assignmentType: seed.assignmentType,
-            difficulty: seed.difficulty,
-            pointsEarned: seed.pointsEarned,
-            pointsPossible: seed.pointsPossible,
-            notes: seed.notes,
-            sortOrder: (seed.sortOrder || active.row + 1) + i,
-            ...patch,
-          });
-        }
-      }
+      await onBulk(patchRows);
+      onMsg(
+        `Filled ${patchRows.length} ${metaByKey.get(col)?.label || col} cell(s)`,
+      );
+      return;
+    }
+
+    // fillTarget === "new": insert `count` brand-new rows right below the
+    // active row and renumber the whole sheet, so the new rows' sortOrder
+    // can't collide with rows already below (a naive seed.sortOrder + i
+    // assignment would, whenever the active row isn't at the very bottom).
+    const insertAt = active.row + 1;
+    const patchRows: (Partial<Assignment> & { title?: string; id?: string })[] =
+      rows.map((row, i) => ({
+        id: row.id,
+        title: row.title,
+        sortOrder: i < insertAt ? i + 1 : i + 1 + count,
+      }));
+    for (let i = 0; i < count; i++) {
+      patchRows.push({
+        ...newRowBase(i),
+        ...colPatch(i),
+        sortOrder: insertAt + 1 + i,
+      });
     }
     await onBulk(patchRows);
-    onMsg(`Filled ${count} ${metaByKey.get(col)?.label || col} cells`);
+    onMsg(`Created ${count} new row(s)`);
   }
 
   async function fillCtrlD() {
@@ -1280,6 +1296,20 @@ export function AssignmentSheet({
               if (fillCount === "") setFillCount("5");
             }}
           />
+        </label>
+        <label className="text-xs text-[var(--muted)]">
+          Into
+          <select
+            className="ml-1 rounded-md border border-[var(--line)] bg-white px-2 py-1"
+            value={fillTarget}
+            onChange={(e) =>
+              setFillTarget(e.target.value as "existing" | "new")
+            }
+            title="Existing: only fill rows already below · New: always create that many new rows"
+          >
+            <option value="existing">existing rows (as is)</option>
+            <option value="new">new rows</option>
+          </select>
         </label>
         <button
           type="button"
