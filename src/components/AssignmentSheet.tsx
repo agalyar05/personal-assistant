@@ -102,6 +102,16 @@ function compareAssignments(
     else if (!la) return 1;
     else if (!lb) return -1;
     else cmp = la.localeCompare(lb, undefined, { sensitivity: "base" });
+    if (cmp === 0) {
+      // Same class (or both unassigned) — break the tie by due date,
+      // always earliest-first regardless of the class sort's own
+      // direction, with undated tasks last.
+      const da = a.dueAt || "";
+      const db = b.dueAt || "";
+      if (da && db && da !== db) return da < db ? -1 : 1;
+      if (da && !db) return -1;
+      if (!da && db) return 1;
+    }
   } else if (key === "dueAt") {
     const da = a.dueAt || "";
     const db = b.dueAt || "";
