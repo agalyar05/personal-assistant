@@ -77,7 +77,7 @@ const MIN_COL_WIDTH = 48;
 const STATUS_LABEL = ASSIGNMENT_STATUS_LABELS;
 const STORAGE_KEY = "pa_assignment_columns";
 const WIDTH_STORAGE_KEY = "pa_assignment_col_widths";
-const SORTABLE_COLS = new Set<ColKey>(["courseId", "dueAt", "status"]);
+const SORTABLE_COLS = new Set<ColKey>(["title", "courseId", "dueAt", "status"]);
 const TEXT_EDIT_COLS = new Set<ColKey>(["title", "link", "assignmentType", "notes"]);
 
 type FillMode = "auto" | "daily" | "weekly" | "monthly";
@@ -114,7 +114,12 @@ function compareAssignments(
       ASSIGNMENT_STATUSES.indexOf(a.status) - ASSIGNMENT_STATUSES.indexOf(b.status);
   }
   if (cmp === 0) {
-    cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+    // numeric: true makes "Bridge 2" sort before "Bridge 10" instead of
+    // "10" < "2" lexicographically — matters for Fill down's title series.
+    cmp = a.title.localeCompare(b.title, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
   }
   if (cmp === 0) cmp = a.sortOrder - b.sortOrder;
   return cmp * mul;
@@ -1042,7 +1047,13 @@ export function AssignmentSheet({
     );
     await onBulk(patchRows, { keepLocal: true });
     const label =
-      key === "courseId" ? "class" : key === "dueAt" ? "due date" : "progress";
+      key === "title"
+        ? "title"
+        : key === "courseId"
+          ? "class"
+          : key === "dueAt"
+            ? "due date"
+            : "progress";
     onMsg(`Sorted by ${label} (${nextDir === "asc" ? "A→Z" : "Z→A"})`);
   }
 
@@ -1373,13 +1384,14 @@ export function AssignmentSheet({
             }}
           >
             <option value="manual">Manual (drag)</option>
+            <option value="title">Title</option>
             <option value="dueAt">Due date</option>
             <option value="courseId">Class</option>
             <option value="status">Progress</option>
           </select>
         </label>
         <span className="hidden text-xs text-[var(--muted)] lg:inline">
-          Drag ▢ corner to fill · click Class / Due / Progress to sort once
+          Drag ▢ corner to fill · click Title / Class / Due / Progress to sort once
         </span>
       </div>
 

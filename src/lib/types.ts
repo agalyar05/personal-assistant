@@ -85,7 +85,7 @@ export type AppSettings = {
   kanbanColumnOrder: Record<string, string[]>;
   /** Masterlist Sheet view's persistent sort, or null for manual (drag) order. */
   masterlistSheetSort: {
-    key: "courseId" | "dueAt" | "status";
+    key: "title" | "courseId" | "dueAt" | "status";
     dir: "asc" | "desc";
   } | null;
 };
