@@ -12,7 +12,7 @@ import {
   parseLocalIsoInTimezone,
 } from "../zoned-time";
 
-const MODEL = "llama-3.3-70b-versatile";
+const MODEL = "openai/gpt-oss-120b";
 
 const QUOTES = [
   "The best way to predict the future is to create it.",
@@ -261,6 +261,7 @@ VOICE / TONE:
 - Keep replies SHORT (1-3 sentences) unless listing calendar/lists.
 - For reminders use schedule_reminder / schedule_recurring_reminder — NOT create_calendar_event.
 - If the user wants a reminder but does NOT say when (no day/time like tomorrow, 8am, in 2 hours), do NOT call schedule_reminder. Ask: "When should I remind you to …?"
+- Relative spans like "in a week", "in 3 days", "next month", "next year" DO count as a time — resolve them yourself using the current local datetime below, don't ask for clarification. "next month"/"in a month" = same day-of-month next month (clamp to the last valid day if that month is shorter), same time as now unless another time was given. "next week"/"in a week" = same weekday/time, 7 days out. "next year"/"in a year" = same month/day, one year out.
 - Only create_calendar_event when user explicitly asks to add to Google Calendar.
 - Lists use dot prefix (.groceries, .todo). Prefer tools for calendar, weather, lists, reminders.
 - When user says they moved / are in a new city (e.g. "I'm in Seattle now"), call set_location.
@@ -269,7 +270,7 @@ VOICE / TONE:
 
 /** Concrete timing — vague words like "later"/"soon" alone are NOT enough. */
 const REMINDER_TIME_CUE =
-  /\b(tomorrow|today|tonight|this\s+(morning|afternoon|evening|weekend)|next\s+(week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s*(min|mins|minute|minutes|hour|hours|hr|hrs|day|days|week|weeks)|at\s+\d{1,2}(?::\d{2})?\s*(am|pm)?|\d{1,2}:\d{2}\s*(am|pm)?|\d{1,2}\s*(am|pm)\b|noon|midnight|\d{1,2}\s*o'?clock)\b/i;
+  /\b(tomorrow|today|tonight|this\s+(morning|afternoon|evening|weekend)|next\s+(week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+(?:\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s*(min|mins|minute|minutes|hour|hours|hr|hrs|day|days|week|weeks|month|months|year|years)|at\s+\d{1,2}(?::\d{2})?\s*(am|pm)?|\d{1,2}:\d{2}\s*(am|pm)?|\d{1,2}\s*(am|pm)\b|noon|midnight|\d{1,2}\s*o'?clock)\b/i;
 
 function reminderWhatWithoutTime(text: string): string | null {
   const t = text.trim();
