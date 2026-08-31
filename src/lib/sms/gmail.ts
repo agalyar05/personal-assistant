@@ -31,10 +31,6 @@ export function calendar() {
   return google.calendar({ version: "v3", auth: oauth2Client() });
 }
 
-export function sheets() {
-  return google.sheets({ version: "v4", auth: oauth2Client() });
-}
-
 function lookbackDays(): string {
   return process.env.GMAIL_LOOKBACK_DAYS?.trim() || "1";
 }

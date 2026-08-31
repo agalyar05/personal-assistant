@@ -68,8 +68,6 @@ export async function PUT(req: Request) {
     endLive?: boolean;
     kanbanColumnOrder?: Record<string, string[]>;
     masterlistSheetSort?: AppSettings["masterlistSheetSort"];
-    masterlistBackupDay?: string;
-    masterlistBackupTime?: string;
   };
   const current = await db.getSettings();
   let cronControl = { ...current.cronControl, ...(body.cronControl || {}) };
@@ -123,12 +121,6 @@ export async function PUT(req: Request) {
   if (body.masterlistSheetSort !== undefined) {
     patch.masterlistSheetSort = body.masterlistSheetSort;
   }
-  if (body.masterlistBackupDay !== undefined) {
-    patch.masterlistBackupDay = body.masterlistBackupDay;
-  } else patch.masterlistBackupDay = current.masterlistBackupDay;
-  if (body.masterlistBackupTime !== undefined) {
-    patch.masterlistBackupTime = body.masterlistBackupTime;
-  } else patch.masterlistBackupTime = current.masterlistBackupTime;
 
   const settings = await db.updateSettings(patch);
   return NextResponse.json({
@@ -143,10 +135,6 @@ export async function PUT(req: Request) {
       dueSoonBoldDays: settings.dueSoonBoldDays,
       kanbanColumnOrder: settings.kanbanColumnOrder,
       masterlistSheetSort: settings.masterlistSheetSort,
-      masterlistBackupDay: settings.masterlistBackupDay,
-      masterlistBackupTime: settings.masterlistBackupTime,
-      lastMasterlistBackup: settings.lastMasterlistBackup,
-      masterlistBackupSheetUrl: settings.masterlistBackupSheetUrl,
     },
   });
 }

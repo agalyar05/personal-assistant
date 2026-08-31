@@ -11,7 +11,6 @@ import {
   sendUserReply,
 } from "./sms/gmail";
 import { getDueReminders, markReminderSent } from "./reminders";
-import { maybeBackupMasterlist } from "./masterlist-backup";
 import { formatWeatherAtHour } from "./weather";
 import { calendar } from "./sms/gmail";
 import {
@@ -216,13 +215,6 @@ export async function runPollCycle(opts?: {
     await maybeMorningBriefing();
   } catch (e) {
     log(`Briefing failed: ${e}`);
-  }
-
-  // 4) weekly Masterlist -> Google Sheets backup
-  try {
-    await maybeBackupMasterlist();
-  } catch (e) {
-    log(`Masterlist backup failed: ${e}`);
   }
 
   return { skipped: false, replies };
