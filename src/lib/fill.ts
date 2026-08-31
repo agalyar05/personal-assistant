@@ -5,9 +5,10 @@ const TITLE_NUM_RE = /^(.*?)(\d+)(\D*)$/;
 export function fillTitleSeries(seed: string, count: number): string[] {
   const m = seed.trim().match(TITLE_NUM_RE);
   if (!m) {
-    return Array.from({ length: count }, (_, i) =>
-      i === 0 ? seed : `${seed} ${i + 1}`,
-    );
+    // Number every item including the first ("Assignment" -> "Assignment 1",
+    // "Assignment 2", ...) rather than leaving the first bare — a fill
+    // series should read as a full 1..N sequence.
+    return Array.from({ length: count }, (_, i) => `${seed} ${i + 1}`);
   }
   const prefix = m[1] ?? "";
   const start = Number(m[2]);

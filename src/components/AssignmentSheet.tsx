@@ -599,6 +599,11 @@ export function AssignmentSheet({
       return;
     }
     const titles = fillTitleSeries(seed.title, count);
+    // Naming brand-new rows: the seed row already occupies "1" (either it
+    // keeps its own title, or — when the title column is the fill target —
+    // it gets renamed to titles[0] below), so new rows continue from "2"
+    // instead of restarting at "1" and duplicating the seed's name.
+    const newRowTitles = fillTitleSeries(seed.title, count + 1).slice(1);
     const dueDates =
       col === "dueAt"
         ? fillDateSeries(
@@ -650,7 +655,7 @@ export function AssignmentSheet({
     function newRowBase(i: number): Partial<Assignment> & { title: string } {
       if (col === "dueAt") {
         return {
-          title: titles[i] || `${seed.title} ${i + 1}`,
+          title: newRowTitles[i] || `${seed.title} ${i + 2}`,
           courseId: seed.courseId,
           status: "not_started",
           dueAt: seed.dueAt,
@@ -660,7 +665,7 @@ export function AssignmentSheet({
         };
       }
       return {
-        title: titles[i] || `${seed.title} ${i + 1}`,
+        title: newRowTitles[i] || `${seed.title} ${i + 2}`,
         courseId: seed.courseId,
         status: seed.status,
         dueAt: seed.dueAt,
@@ -711,15 +716,21 @@ export function AssignmentSheet({
     const patchRows: (Partial<Assignment> & { title?: string; id?: string })[] =
       fullOrder.map((row, i) => ({
         id: row.id,
-        title: row.title,
+        // Turn the seed row itself into "<title> 1" when title is the fill
+        // target — otherwise it keeps its old bare title while the new
+        // rows start at "2", or (if the seed already ended in a number)
+        // both it and the first new row would read the same "<title> 1".
+        title: col === "title" && row.id === seed.id ? titles[0]! : row.title,
         sortOrder: i < insertAt ? i + 1 : i + 1 + count,
       }));
     for (let i = 0; i < count; i++) {
-      patchRows.push({
-        ...newRowBase(i),
-        ...colPatch(i),
-        sortOrder: insertAt + 1 + i,
-      });
+      const patch = { ...newRowBase(i), ...colPatch(i) };
+      // colPatch(i) would otherwise stamp titles[i] (the seed-aligned
+      // series, unshifted) onto every new row's title when title is the
+      // fill target — override with the shifted series so new rows read
+      // "seed 2", "seed 3", ... instead of restarting at "seed 1".
+      if (col === "title") patch.title = newRowTitles[i]!;
+      patchRows.push({ ...patch, sortOrder: insertAt + 1 + i });
     }
     const result = await onBulk(patchRows);
     const label = `Created ${count} new row(s)`;
