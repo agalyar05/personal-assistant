@@ -23,6 +23,19 @@ function normalizeUrl(raw: string): string {
   return `https://${s}`;
 }
 
+function groupLabel(c: Course): string {
+  return c.code ? `${c.code} — ${c.name}` : c.name;
+}
+
+function sortByLabel(courses: Course[]): Course[] {
+  return [...courses].sort((a, b) =>
+    groupLabel(a).localeCompare(groupLabel(b), undefined, {
+      sensitivity: "base",
+      numeric: true,
+    }),
+  );
+}
+
 export default function GroupsPage() {
   const { theme } = useUiTheme();
   const [courses, setCourses] = useState<Course[]>([]);
@@ -51,10 +64,12 @@ export default function GroupsPage() {
     const res = await fetch("/api/courses");
     const json = await res.json();
     setCourses(
-      (json.courses || []).map((c: Course) => ({
-        ...c,
-        links: Array.isArray(c.links) ? c.links : [],
-      })),
+      sortByLabel(
+        (json.courses || []).map((c: Course) => ({
+          ...c,
+          links: Array.isArray(c.links) ? c.links : [],
+        })),
+      ),
     );
   }, []);
 
