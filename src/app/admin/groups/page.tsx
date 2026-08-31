@@ -5,10 +5,10 @@ import type { Course, CourseLink } from "@/lib/types";
 import { isApplicationsGroup } from "@/lib/courses";
 import {
   classSwatchPalette,
+  googleCalendarColorName,
   hexesEqual,
   nextUnusedClassColor,
 } from "@/lib/themes";
-import { useUiTheme } from "@/components/ThemePicker";
 
 const MAX_LINKS = 5;
 
@@ -37,7 +37,6 @@ function sortByLabel(courses: Course[]): Course[] {
 }
 
 export default function GroupsPage() {
-  const { theme } = useUiTheme();
   const [courses, setCourses] = useState<Course[]>([]);
   const [msg, setMsg] = useState("");
   const [editingLinksId, setEditingLinksId] = useState<string | null>(null);
@@ -55,10 +54,7 @@ export default function GroupsPage() {
     [courses],
   );
 
-  const palette = useMemo(
-    () => classSwatchPalette(theme, usedColors, 4),
-    [theme, usedColors],
-  );
+  const palette = useMemo(() => classSwatchPalette(usedColors), [usedColors]);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/courses");
@@ -81,10 +77,7 @@ export default function GroupsPage() {
     const payload = partial || {
       name: form.name,
       code: form.code,
-      color: nextUnusedClassColor(
-        theme,
-        courses.map((c) => c.color),
-      ),
+      color: nextUnusedClassColor(courses.map((c) => c.color)),
       professor: form.professor,
       schedule: form.schedule,
       links: form.links.filter((l) => l.url.trim()),
@@ -401,12 +394,14 @@ export default function GroupsPage() {
                 <div className="flex max-w-[220px] flex-wrap gap-1 sm:max-w-none">
                   {palette.map((hex) => {
                     const selected = hexesEqual(c.color, hex);
+                    const name = googleCalendarColorName(hex);
+                    const label = name ? `${name} (${hex})` : hex;
                     return (
                       <button
                         key={hex}
                         type="button"
                         aria-label={
-                          selected ? `Selected color ${hex}` : `Color ${hex}`
+                          selected ? `Selected color ${label}` : `Color ${label}`
                         }
                         aria-pressed={selected}
                         className={`h-6 w-6 rounded-full border-2 transition-transform ${
@@ -415,7 +410,7 @@ export default function GroupsPage() {
                             : "border-white/60"
                         }`}
                         style={{ background: hex }}
-                        title={hex}
+                        title={label}
                         onClick={() =>
                           void saveCourse({
                             id: c.id,
