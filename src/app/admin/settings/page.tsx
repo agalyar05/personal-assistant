@@ -22,6 +22,10 @@ type Settings = {
     daysOfWeek: number[];
     liveUntil: string | null;
   };
+  masterlistBackupDay: string;
+  masterlistBackupTime: string;
+  lastMasterlistBackup: string | null;
+  masterlistBackupSheetUrl: string | null;
 };
 
 export default function SettingsPage() {
@@ -30,6 +34,8 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState("");
   const [taskHorizonInput, setTaskHorizonInput] = useState("7");
   const [dueSoonBoldInput, setDueSoonBoldInput] = useState("1");
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupMsg, setBackupMsg] = useState("");
 
   async function load() {
     const res = await fetch("/api/settings");
@@ -222,6 +228,115 @@ export default function SettingsPage() {
         >
           Save
         </button>
+      </div>
+
+      <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">
+        <h2 className="display text-2xl">Masterlist backup</h2>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Weekly snapshot of every Masterlist row, written to a Google
+          Sheet — a safety net if anything here ever gets lost.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm">
+            Day
+            <select
+              className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2"
+              value={settings.masterlistBackupDay}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  masterlistBackupDay: e.target.value,
+                })
+              }
+            >
+              {[
+                "sunday",
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+              ].map((d) => (
+                <option key={d} value={d}>
+                  {d[0]!.toUpperCase() + d.slice(1)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm">
+            Time (HH:MM)
+            <input
+              className="mt-1 w-full rounded-xl border border-[var(--line)] bg-white px-3 py-2"
+              value={settings.masterlistBackupTime}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  masterlistBackupTime: e.target.value,
+                })
+              }
+            />
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm text-white"
+            onClick={() =>
+              save({
+                masterlistBackupDay: settings.masterlistBackupDay,
+                masterlistBackupTime: settings.masterlistBackupTime,
+              })
+            }
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            disabled={backingUp}
+            className="rounded-xl border border-[var(--line)] px-4 py-2 text-sm disabled:opacity-50"
+            onClick={async () => {
+              setBackingUp(true);
+              setBackupMsg("Backing up…");
+              try {
+                const res = await fetch("/api/masterlist-backup", {
+                  method: "POST",
+                });
+                const json = await res.json();
+                if (json.ok) {
+                  setBackupMsg("Backed up just now");
+                  await load();
+                } else {
+                  setBackupMsg(`Failed: ${json.error || "unknown error"}`);
+                }
+              } catch {
+                setBackupMsg("Failed to reach the server");
+              } finally {
+                setBackingUp(false);
+              }
+            }}
+          >
+            {backingUp ? "Backing up…" : "Back up now"}
+          </button>
+          {settings.masterlistBackupSheetUrl && (
+            <a
+              href={settings.masterlistBackupSheetUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-[var(--accent)] underline"
+            >
+              Open backup sheet
+            </a>
+          )}
+        </div>
+        {backupMsg && (
+          <p className="mt-2 text-sm text-[var(--muted)]">{backupMsg}</p>
+        )}
+        {settings.lastMasterlistBackup && (
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            Last backup: {settings.lastMasterlistBackup}
+          </p>
+        )}
       </div>
 
       <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6">

@@ -88,6 +88,14 @@ export type AppSettings = {
     key: "title" | "courseId" | "dueAt" | "status";
     dir: "asc" | "desc";
   } | null;
+  /** Weekly Masterlist -> Google Sheets backup. Day is a lowercase weekday
+   * name (sunday..saturday); time is HH:MM 24h local. */
+  masterlistBackupDay: string;
+  masterlistBackupTime: string;
+  lastMasterlistBackup: string | null;
+  /** Spreadsheet the backup writes to — created automatically on first run. */
+  masterlistBackupSheetId: string | null;
+  masterlistBackupSheetUrl: string | null;
 };
 
 export type AssignmentStatus =
@@ -268,6 +276,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pendingReminderMessage: null,
   kanbanColumnOrder: {},
   masterlistSheetSort: null,
+  masterlistBackupDay: "sunday",
+  masterlistBackupTime: "03:00",
+  lastMasterlistBackup: null,
+  masterlistBackupSheetId: null,
+  masterlistBackupSheetUrl: null,
 };
 
 export const DEFAULT_STORE: Store = {

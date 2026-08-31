@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * One-time Google OAuth to get a refresh token for Gmail + Calendar.
+ * One-time Google OAuth to get a refresh token for Gmail + Calendar + Sheets.
  * Usage:
  *   1. Put Desktop OAuth client JSON as credentials.json in project root
  *      (same file you used for the old Python bot), OR set
@@ -17,6 +17,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/spreadsheets",
 ];
 
 function loadClient() {
