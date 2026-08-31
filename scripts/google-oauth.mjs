@@ -17,7 +17,10 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/calendar",
-  "https://www.googleapis.com/auth/spreadsheets",
+  // Per-file scope, not the broad "spreadsheets" scope — grants access only
+  // to files this app itself creates (the Masterlist backup sheet), not
+  // every spreadsheet in the user's Google account.
+  "https://www.googleapis.com/auth/drive.file",
 ];
 
 function loadClient() {
