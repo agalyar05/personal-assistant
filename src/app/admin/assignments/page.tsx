@@ -110,7 +110,7 @@ export default function AssignmentsPage() {
   const { pending: undoPending, offerUndo, runUndo, dismiss: dismissUndo } =
     useUndoToast();
   // Successive "+ Row" clicks within this window stack downward from the
-  // 4th position instead of each one jumping back to row 4.
+  // 1st position instead of each one jumping back to row 1.
   const lastAddRowRef = useRef<{ index: number; at: number } | null>(null);
   // Serializes addBlankRow calls so a rapid second click can't read a stale
   // sheetRows snapshot from before the first insert finished.
@@ -238,6 +238,19 @@ export default function AssignmentsPage() {
         a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
     );
   }, [horizonAssignments, horizonApps, applicationsGroup?.id]);
+
+  /** Same shape as sheetRows but WITHOUT the task-horizon filter — used
+   * whenever we renumber sortOrder (insert/reorder/fill-new), so a task
+   * sitting outside the horizon window keeps a unique sortOrder instead of
+   * colliding with whatever the horizon-filtered renumber just assigned. */
+  const allSheetRows = useMemo(() => {
+    const appsCourseId = applicationsGroup?.id || null;
+    const appRows = openApps.map((a) => applicationToSheetRow(a, appsCourseId));
+    return [...assignments, ...appRows].sort(
+      (a, b) =>
+        a.sortOrder - b.sortOrder || a.title.localeCompare(b.title),
+    );
+  }, [assignments, openApps, applicationsGroup?.id]);
 
   async function patchApplicationFromSheet(
     patch: Partial<Assignment> & { id: string },
@@ -399,14 +412,14 @@ export default function AssignmentsPage() {
     setMsg(onTodo ? "Added to .todo" : "Removed from .todo");
   }
 
-  /** "+ Row" always inserts at the 4th visible position, not appended at the end. */
+  /** "+ Row" always inserts at the 1st visible position, not appended at the end. */
   function addBlankRow(): Promise<void> {
     const ADD_STREAK_WINDOW_MS = 30_000;
     const run = async () => {
       const now = Date.now();
       const last = lastAddRowRef.current;
       const withinStreak = Boolean(last && now - last.at < ADD_STREAK_WINDOW_MS);
-      const index = withinStreak ? last!.index + 1 : 3;
+      const index = withinStreak ? last!.index + 1 : 0;
       const baseOrder =
         withinStreak && streakOrderRef.current ? streakOrderRef.current : sheetRows;
       // Update synchronously, before awaiting, so a second click that
@@ -432,21 +445,27 @@ export default function AssignmentsPage() {
     where: "above" | "below",
     baseOrder?: Assignment[],
   ): Promise<Assignment | null> {
-    // Insert into the FULL visible sheet order (assignments + synthetic
-    // application rows) and renumber that whole list, same as drag-reorder
-    // does via bulkSave. Renumbering only real assignments (as this used to)
-    // left application rows' sortOrder stale relative to the freshly
-    // renumbered assignments, so rows near the assignment/application
-    // boundary would swap places the next time they collided on a value.
+    // The anchor is looked up in the horizon-filtered visible order (what
+    // the user actually sees/clicked relative to), but the actual insertion
+    // and renumbering happens against allSheetRows (unfiltered) — renumbering
+    // only the visible subset left rows outside the task horizon holding
+    // their old sortOrder, which could collide with the freshly renumbered
+    // visible rows the next time an insert/reorder touched that range.
     // `baseOrder` lets a rapid-click streak (see addBlankRow) pass its own
-    // up-to-date order instead of the possibly-stale `sheetRows` closure.
+    // up-to-date visible order instead of the possibly-stale `sheetRows`
+    // closure; it's still just used for anchor lookup, not renumbering.
     const visible = baseOrder ?? sheetRows;
-    const anchor = visible[index];
-    const insertAt = anchor
-      ? where === "above"
-        ? index
-        : index + 1
-      : visible.length;
+    const anchorRow = visible[index];
+    const fullOrder = allSheetRows;
+    const anchorFullIdx = anchorRow
+      ? fullOrder.findIndex((r) => r.id === anchorRow.id)
+      : -1;
+    const insertAt =
+      anchorFullIdx >= 0
+        ? where === "above"
+          ? anchorFullIdx
+          : anchorFullIdx + 1
+        : fullOrder.length;
 
     const res = await fetch("/api/assignments", {
       method: "POST",
@@ -469,7 +488,7 @@ export default function AssignmentsPage() {
       await refreshRows();
       return null;
     }
-    const next = [...visible];
+    const next = [...fullOrder];
     next.splice(insertAt, 0, created);
     await bulkSave(
       next.map((row, i) => ({
@@ -485,13 +504,22 @@ export default function AssignmentsPage() {
   async function addInKanbanColumn(columnId: string, title = "New assignment") {
     const trimmed = title.trim();
     if (!trimmed) return;
+    // Kanban columns are sorted by due date, not by sortOrder/insert
+    // position, so a new card's exact sortOrder only matters for the
+    // Sheet's manual order — appending at the end is fine here. Using the
+    // actual max (not assignments.length) avoids colliding with an existing
+    // row whenever sortOrder has gaps, e.g. after deletions.
+    const maxSortOrder = assignments.reduce(
+      (max, a) => Math.max(max, a.sortOrder || 0),
+      0,
+    );
     const body: Record<string, unknown> = {
       title: trimmed,
       status: "not_started",
       difficulty: "medium",
       assignmentType: "Homework",
       link: "",
-      sortOrder: assignments.length + 1,
+      sortOrder: maxSortOrder + 1,
     };
     if (kanbanBy === "status") body.status = columnId;
     if (kanbanBy === "difficulty") body.difficulty = columnId;
@@ -657,6 +685,7 @@ export default function AssignmentsPage() {
       {view === "sheet" && (
         <AssignmentSheet
           assignments={sheetRows}
+          allAssignments={allSheetRows}
           courses={courses}
           dueSoonBoldDays={dueSoonBoldDays}
           offerUndo={offerUndo}
@@ -1601,31 +1630,42 @@ function KanbanView({
   }
 
   const columns = useMemo(() => {
+    // Within a column, earliest due date first — undated tasks last.
+    const byDueDate = (a: Assignment, b: Assignment) => {
+      const pa = dueDateParts(a.dueAt);
+      const pb = dueDateParts(b.dueAt);
+      if (!pa && !pb) return 0;
+      if (!pa) return 1;
+      if (!pb) return -1;
+      const va = pa.year * 10000 + pa.month * 100 + pa.day;
+      const vb = pb.year * 10000 + pb.month * 100 + pb.day;
+      return va - vb;
+    };
     let cols: { id: string; label: string; color?: string; items: Assignment[] }[];
     if (kanbanBy === "status") {
       cols = ASSIGNMENT_STATUSES.map((s) => ({
         id: s,
         label: STATUS_LABEL[s],
-        items: assignments.filter((a) => a.status === s),
+        items: assignments.filter((a) => a.status === s).sort(byDueDate),
       }));
     } else if (kanbanBy === "difficulty") {
       cols = ASSIGNMENT_DIFFICULTIES.map((d) => ({
         id: d,
         label: d,
-        items: assignments.filter((a) => a.difficulty === d),
+        items: assignments.filter((a) => a.difficulty === d).sort(byDueDate),
       }));
     } else {
       cols = courses.map((c) => ({
         id: c.id,
         label: c.code || c.name,
         color: c.color,
-        items: assignments.filter((a) => a.courseId === c.id),
+        items: assignments.filter((a) => a.courseId === c.id).sort(byDueDate),
       }));
       cols.push({
         id: "none",
         label: "Unassigned",
         color: "#94a3b8",
-        items: assignments.filter((a) => !a.courseId),
+        items: assignments.filter((a) => !a.courseId).sort(byDueDate),
       });
     }
     const order = applyColumnOrder(

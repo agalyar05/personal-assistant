@@ -151,6 +151,7 @@ function inRange(pos: CellPos, a: CellPos, b: CellPos) {
 
 export function AssignmentSheet({
   assignments,
+  allAssignments,
   courses,
   dueSoonBoldDays,
   onChangeLocal,
@@ -165,6 +166,10 @@ export function AssignmentSheet({
   offerUndo,
 }: {
   assignments: Assignment[];
+  /** Same rows as `assignments` but without the task-horizon filter — used
+   * for renumbering sortOrder (drag-reorder, Fill down's new-rows mode) so
+   * a row outside the horizon can't collide with a freshly renumbered one. */
+  allAssignments: Assignment[];
   courses: Course[];
   /** Bold a row if its due date is overdue, today, or within this many days. */
   dueSoonBoldDays: number;
@@ -691,17 +696,20 @@ export function AssignmentSheet({
     }
 
     // fillTarget === "new": insert `count` brand-new rows right below the
-    // active row and renumber the whole sheet, so the new rows' sortOrder
-    // can't collide with rows already below (a naive seed.sortOrder + i
-    // assignment would, whenever the active row isn't at the very bottom).
-    const insertAt = active.row + 1;
+    // active row and renumber the whole UNFILTERED sheet, so the new rows'
+    // sortOrder can't collide with any row — including one sitting outside
+    // the task horizon, which a visible-rows-only renumber would silently
+    // leave untouched with its old sortOrder.
+    const fullOrder = allAssignments;
+    const seedFullIdx = fullOrder.findIndex((r) => r.id === seed.id);
+    const insertAt = seedFullIdx >= 0 ? seedFullIdx + 1 : fullOrder.length;
     // Pre-fill sortOrder snapshot, for undo — restores every existing row
     // to exactly where it was before the insert shifted things down.
-    const beforeRows: (Partial<Assignment> & { id: string })[] = rows.map(
+    const beforeRows: (Partial<Assignment> & { id: string })[] = fullOrder.map(
       (row) => ({ id: row.id, title: row.title, sortOrder: row.sortOrder }),
     );
     const patchRows: (Partial<Assignment> & { title?: string; id?: string })[] =
-      rows.map((row, i) => ({
+      fullOrder.map((row, i) => ({
         id: row.id,
         title: row.title,
         sortOrder: i < insertAt ? i + 1 : i + 1 + count,
@@ -977,8 +985,26 @@ export function AssignmentSheet({
     };
   }, [ctxMenu]);
 
+  /** Splices a full reordering of the VISIBLE (horizon-filtered) rows back
+   * into the full, unfiltered row list — rows outside the task horizon stay
+   * exactly where they are instead of getting silently left with a stale
+   * sortOrder that the fresh 1..N renumber of just the visible rows could
+   * collide with. `next` must contain exactly the same rows as `rows`,
+   * just reordered. */
+  function mergeIntoFullOrder(next: Assignment[]): Assignment[] {
+    const visibleIds = new Set(rows.map((r) => r.id));
+    let j = 0;
+    return allAssignments.map((row) => {
+      if (!visibleIds.has(row.id)) return row;
+      const replacement = next[j];
+      j += 1;
+      return replacement ?? row;
+    });
+  }
+
   async function commitRowOrder(next: Assignment[]) {
-    const patchRows = next.map((row, i) => ({
+    const merged = mergeIntoFullOrder(next);
+    const patchRows = merged.map((row, i) => ({
       id: row.id,
       title: row.title,
       sortOrder: i + 1,
@@ -1036,8 +1062,9 @@ export function AssignmentSheet({
     const sorted = [...assignments].sort((a, b) =>
       compareAssignments(a, b, key, mul, courseLabel),
     );
+    const merged = mergeIntoFullOrder(sorted);
 
-    const patchRows = sorted.map((row, i) => ({
+    const patchRows = merged.map((row, i) => ({
       id: row.id,
       title: row.title,
       sortOrder: i + 1,
