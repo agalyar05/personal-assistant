@@ -705,6 +705,9 @@ export function AssignmentSheet({
     // sortOrder can't collide with any row — including one sitting outside
     // the task horizon, which a visible-rows-only renumber would silently
     // leave untouched with its old sortOrder.
+    // Switch to Manual so the new rows are actually visible right after the
+    // seed row instead of wherever the active sort would place them.
+    setSort(null);
     const fullOrder = allAssignments;
     const seedFullIdx = fullOrder.findIndex((r) => r.id === seed.id);
     const insertAt = seedFullIdx >= 0 ? seedFullIdx + 1 : fullOrder.length;
@@ -1352,7 +1355,14 @@ export function AssignmentSheet({
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--line)] px-3 py-2">
         <button
           type="button"
-          onClick={() => void onAddRow()}
+          onClick={() => {
+            // New row lands at the top of manual order regardless of which
+            // column the sheet is currently sorted by — switch to Manual so
+            // it's actually visible there instead of wherever the active
+            // sort would otherwise place it.
+            setSort(null);
+            void onAddRow();
+          }}
           className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm text-white"
         >
           + Row
@@ -1769,15 +1779,24 @@ export function AssignmentSheet({
             [
               {
                 label: "Insert row above",
-                run: () => void onInsertRow(ctxMenu.row, "above"),
+                run: () => {
+                  setSort(null);
+                  void onInsertRow(ctxMenu.row, "above");
+                },
               },
               {
                 label: "Insert row below",
-                run: () => void onInsertRow(ctxMenu.row, "below"),
+                run: () => {
+                  setSort(null);
+                  void onInsertRow(ctxMenu.row, "below");
+                },
               },
               {
-                label: "Add row at bottom",
-                run: () => void onAddRow(),
+                label: "+ Row (top)",
+                run: () => {
+                  setSort(null);
+                  void onAddRow();
+                },
               },
               { type: "sep" as const },
               {
