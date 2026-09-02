@@ -79,6 +79,8 @@ const STORAGE_KEY = "pa_assignment_columns";
 const WIDTH_STORAGE_KEY = "pa_assignment_col_widths";
 const SORTABLE_COLS = new Set<ColKey>(["title", "courseId", "dueAt", "status"]);
 const TEXT_EDIT_COLS = new Set<ColKey>(["title", "link", "assignmentType", "notes"]);
+/** "Final exam", "FINAL", "exam 2" — always worth bolding regardless of due date. */
+const FLAGGED_TITLE_RE = /\b(final|exam)\b/i;
 
 type FillMode = "auto" | "daily" | "weekly" | "monthly";
 type CellPos = { row: number; col: number };
@@ -255,24 +257,6 @@ export function AssignmentSheet({
       timers.clear();
     };
   }, []);
-
-  useEffect(() => {
-    void (async () => {
-      const res = await fetch("/api/settings?slim=1");
-      const json = await res.json();
-      const saved = json.settings?.masterlistSheetSort as SortState | null;
-      if (saved) setSort(saved);
-    })();
-  }, []);
-
-  async function setPersistentSort(next: SortState | null) {
-    setSort(next);
-    await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ masterlistSheetSort: next }),
-    });
-  }
 
   const courseLabel = useMemo(() => {
     const m = new Map<string, string>();
@@ -1419,25 +1403,6 @@ export function AssignmentSheet({
         >
           Fill down
         </button>
-        <label className="text-xs text-[var(--muted)]">
-          Always sort by
-          <select
-            className="ml-1 rounded-md border border-[var(--line)] bg-white px-2 py-1"
-            value={sort?.key || "manual"}
-            onChange={(e) => {
-              const key = e.target.value;
-              void setPersistentSort(
-                key === "manual" ? null : { key: key as SortState["key"], dir: "asc" },
-              );
-            }}
-          >
-            <option value="manual">Manual (drag)</option>
-            <option value="title">Title</option>
-            <option value="dueAt">Due date</option>
-            <option value="courseId">Class</option>
-            <option value="status">Progress</option>
-          </select>
-        </label>
         <span className="hidden text-xs text-[var(--muted)] lg:inline">
           Drag ▢ corner to fill · click Title / Class / Due / Progress to sort once
         </span>
@@ -1582,7 +1547,8 @@ export function AssignmentSheet({
                     : ""
                 } ${
                   !isClosedAssignmentStatus(a.status) &&
-                  isDueSoon(a.dueAt, dueSoonBoldDays)
+                  (isDueSoon(a.dueAt, dueSoonBoldDays) ||
+                    FLAGGED_TITLE_RE.test(a.title))
                     ? "font-bold"
                     : ""
                 } ${dragRowSet?.includes(rowIdx) ? "opacity-50" : ""}`}

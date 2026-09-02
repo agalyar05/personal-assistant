@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import * as db from "@/lib/db";
 import type {
-  AppSettings,
   CronControlSettings,
   DashboardLayout,
   UiThemeSettings,
@@ -37,7 +36,6 @@ export async function GET(req: Request) {
         taskHorizonDays: settings.taskHorizonDays,
         dueSoonBoldDays: settings.dueSoonBoldDays,
         kanbanColumnOrder: settings.kanbanColumnOrder,
-        masterlistSheetSort: settings.masterlistSheetSort,
       },
       provider: db.dbProvider(),
     });
@@ -67,7 +65,6 @@ export async function PUT(req: Request) {
     liveHours?: number;
     endLive?: boolean;
     kanbanColumnOrder?: Record<string, string[]>;
-    masterlistSheetSort?: AppSettings["masterlistSheetSort"];
   };
   const current = await db.getSettings();
   let cronControl = { ...current.cronControl, ...(body.cronControl || {}) };
@@ -118,9 +115,6 @@ export async function PUT(req: Request) {
   if (body.kanbanColumnOrder !== undefined) {
     patch.kanbanColumnOrder = body.kanbanColumnOrder;
   }
-  if (body.masterlistSheetSort !== undefined) {
-    patch.masterlistSheetSort = body.masterlistSheetSort;
-  }
 
   const settings = await db.updateSettings(patch);
   return NextResponse.json({
@@ -134,7 +128,6 @@ export async function PUT(req: Request) {
       taskHorizonDays: settings.taskHorizonDays,
       dueSoonBoldDays: settings.dueSoonBoldDays,
       kanbanColumnOrder: settings.kanbanColumnOrder,
-      masterlistSheetSort: settings.masterlistSheetSort,
     },
   });
 }
