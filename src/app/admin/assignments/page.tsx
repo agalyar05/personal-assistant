@@ -1871,13 +1871,22 @@ function KanbanView({
                   >
                     <div className="flex items-start justify-between gap-1">
                       {isEditing ? (
-                        <input
+                        <textarea
                           autoFocus
+                          rows={2}
                           value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
+                          onChange={(e) => {
+                            setEditText(e.target.value);
+                            e.target.style.height = "auto";
+                            e.target.style.height = `${e.target.scrollHeight}px`;
+                          }}
+                          onFocus={(e) => {
+                            e.target.style.height = "auto";
+                            e.target.style.height = `${e.target.scrollHeight}px`;
+                          }}
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") {
+                            if (e.key === "Enter" && !e.shiftKey) {
                               e.preventDefault();
                               const t = editText.trim();
                               if (t && t !== a.title) onRename(a.id, t);
@@ -1891,7 +1900,7 @@ function KanbanView({
                             if (t && t !== a.title) onRename(a.id, t);
                             setEditId(null);
                           }}
-                          className="w-full rounded border border-[var(--accent)] bg-white px-1.5 py-0.5 text-xs font-medium sm:text-sm"
+                          className="w-full resize-none overflow-hidden rounded border border-[var(--accent)] bg-white px-1.5 py-0.5 text-xs font-medium sm:text-sm"
                         />
                       ) : (
                         <div className="text-xs font-medium leading-snug sm:text-sm">
