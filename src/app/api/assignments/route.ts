@@ -45,9 +45,28 @@ export async function POST(req: Request) {
   }
 
   if (body.action === "bulk" && Array.isArray(body.rows)) {
-    const assignments = await db.bulkUpsertAssignments(
-      body.rows as (Partial<Assignment> & { title?: string; id?: string })[],
-    );
+    const rows = body.rows as (Partial<Assignment> & {
+      title?: string;
+      id?: string;
+    })[];
+    // Same .todo mirroring as the single-row patch below, for rows whose
+    // patch actually touches status (fill-down, bulk status edits) — most
+    // bulk calls are pure reorders with no status field, so this is a
+    // cheap no-op for those.
+    const statusChanges = rows.filter((r) => r.id && "status" in r);
+    const beforeById = statusChanges.length
+      ? new Map((await db.getAssignments()).map((a) => [a.id, a]))
+      : new Map<string, Assignment>();
+
+    const assignments = await db.bulkUpsertAssignments(rows);
+
+    for (const r of statusChanges) {
+      const prev = beforeById.get(r.id!);
+      const updated = assignments.find((a) => a.id === r.id);
+      if (updated?.todoItemId && prev?.status !== r.status) {
+        await syncTodoFromAssignmentStatus(updated, r.status as AssignmentStatus);
+      }
+    }
     return NextResponse.json({ assignments });
   }
 
