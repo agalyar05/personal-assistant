@@ -20,7 +20,12 @@ import {
 import { CelebrationBurst } from "@/components/CelebrationBurst";
 import { UndoToast } from "@/components/UndoToast";
 import { useUndoToast } from "@/lib/useUndoToast";
-import { dueDateParts, formatDueDate, withinTaskHorizon } from "@/lib/fill";
+import {
+  dueDateParts,
+  formatDueDate,
+  hasFlaggedTitle,
+  withinTaskHorizon,
+} from "@/lib/fill";
 import {
   applyColumnOrder,
   KANBAN_COLUMN_DRAG_TYPE,
@@ -1395,7 +1400,9 @@ function CalendarView({
                 }}
                 className={`cursor-grab truncate rounded px-1.5 py-1 text-[11px] active:cursor-grabbing ${
                   isDragging ? "opacity-40" : ""
-                } ${isSel ? "ring-2 ring-[var(--accent)] ring-offset-1" : ""}`}
+                } ${isSel ? "ring-2 ring-[var(--accent)] ring-offset-1" : ""} ${
+                  hasFlaggedTitle(a.title) ? "font-bold" : ""
+                }`}
                 style={{
                   background: c?.color
                     ? faintClassTint(c.color, 0.28)

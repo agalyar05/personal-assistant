@@ -14,6 +14,7 @@ import {
   fillDateSeries,
   fillTitleSeries,
   fromInputDate,
+  hasFlaggedTitle,
   isDueSoon,
   toInputDate,
 } from "@/lib/fill";
@@ -79,8 +80,6 @@ const STORAGE_KEY = "pa_assignment_columns";
 const WIDTH_STORAGE_KEY = "pa_assignment_col_widths";
 const SORTABLE_COLS = new Set<ColKey>(["title", "courseId", "dueAt", "status"]);
 const TEXT_EDIT_COLS = new Set<ColKey>(["title", "link", "assignmentType", "notes"]);
-/** "Final exam", "FINAL", "exam 2" — always worth bolding regardless of due date. */
-const FLAGGED_TITLE_RE = /\b(final|exam)\b/i;
 
 type FillMode = "auto" | "daily" | "weekly" | "monthly";
 type CellPos = { row: number; col: number };
@@ -1548,7 +1547,7 @@ export function AssignmentSheet({
                 } ${
                   !isClosedAssignmentStatus(a.status) &&
                   (isDueSoon(a.dueAt, dueSoonBoldDays) ||
-                    FLAGGED_TITLE_RE.test(a.title))
+                    hasFlaggedTitle(a.title))
                     ? "font-bold"
                     : ""
                 } ${dragRowSet?.includes(rowIdx) ? "opacity-50" : ""}`}

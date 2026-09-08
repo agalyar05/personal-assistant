@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ListDifficulty, ListItem } from "@/lib/types";
+import type { Assignment, Course, ListDifficulty, ListItem } from "@/lib/types";
 import { CelebrationBurst } from "@/components/CelebrationBurst";
 import { UndoToast } from "@/components/UndoToast";
 import {
@@ -13,6 +13,7 @@ import {
   kanbanColumnClass,
   reorderColumnIds,
 } from "@/lib/kanban-layout";
+import { faintClassTint } from "@/lib/themes";
 import { useUndoToast } from "@/lib/useUndoToast";
 
 type ColumnId = ListDifficulty | "done";
@@ -53,6 +54,9 @@ export default function TodoPage() {
   );
   const [editId, setEditId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [courseColorByTodoId, setCourseColorByTodoId] = useState<
+    Map<string, string>
+  >(new Map());
 
   const load = useCallback(async () => {
     const res = await fetch("/api/lists?list=todo&all=1");
@@ -65,9 +69,25 @@ export default function TodoPage() {
     );
   }, []);
 
+  const loadColors = useCallback(async () => {
+    const res = await fetch("/api/assignments");
+    const json = await res.json();
+    const assignments = (json.assignments || []) as Assignment[];
+    const courses = (json.courses || []) as Course[];
+    const courseMap = new Map(courses.map((c) => [c.id, c]));
+    const map = new Map<string, string>();
+    for (const a of assignments) {
+      if (!a.todoItemId || !a.courseId) continue;
+      const color = courseMap.get(a.courseId)?.color;
+      if (color) map.set(a.todoItemId, color);
+    }
+    setCourseColorByTodoId(map);
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadColors();
+  }, [load, loadColors]);
 
   useEffect(() => {
     void (async () => {
@@ -474,6 +494,7 @@ export default function TodoPage() {
                 const isSel = selected.has(item.id);
                 const isDragging = dragIds.includes(item.id);
                 const isEditing = editId === item.id;
+                const courseColor = courseColorByTodoId.get(item.id);
                 return (
                   <div
                     key={item.id}
@@ -536,6 +557,11 @@ export default function TodoPage() {
                         ? "bg-stone-100 text-[var(--muted)] line-through opacity-80"
                         : ""
                     } ${isDragging ? "opacity-50" : ""}`}
+                    style={
+                      courseColor && !isSel && !item.checked
+                        ? { backgroundColor: faintClassTint(courseColor, 0.16) }
+                        : undefined
+                    }
                   >
                     <div className="flex items-start justify-between gap-1">
                       {isEditing ? (

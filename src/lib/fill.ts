@@ -211,3 +211,10 @@ export function isDueSoon(
   end.setDate(end.getDate() + Math.max(0, days));
   return due.getTime() <= end.getTime();
 }
+
+/** "Final exam", "FINAL", "exam 2" — always worth bolding regardless of due date. */
+const FLAGGED_TITLE_RE = /\b(final|exam)\b/i;
+
+export function hasFlaggedTitle(title: string): boolean {
+  return FLAGGED_TITLE_RE.test(title);
+}
