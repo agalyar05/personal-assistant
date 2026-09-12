@@ -66,12 +66,8 @@ export async function getCronControl(): Promise<CronControlSettings> {
   return { ...DEFAULT_SETTINGS.cronControl, ...(raw || {}) };
 }
 
-export async function getSettings(): Promise<AppSettings> {
-  if (!hasSupabase()) return local.getSettings();
-  const sb = client();
-  const { data, error } = await sb.from("app_settings").select("*").eq("id", 1).maybeSingle();
-  if (error || !data) return DEFAULT_SETTINGS;
-  const payload = (data.payload || {}) as Partial<AppSettings>;
+function normalizeSettings(payload: Partial<AppSettings> | null): AppSettings {
+  payload = payload || {};
   return {
     ...DEFAULT_SETTINGS,
     ...payload,
@@ -117,12 +113,19 @@ export async function getSettings(): Promise<AppSettings> {
   };
 }
 
-export async function updateSettings(
+export async function getSettings(): Promise<AppSettings> {
+  if (!hasSupabase()) return local.getSettings();
+  const sb = client();
+  const { data, error } = await sb.from("app_settings").select("*").eq("id", 1).maybeSingle();
+  if (error || !data) return DEFAULT_SETTINGS;
+  return normalizeSettings(data.payload as Partial<AppSettings>);
+}
+
+function mergeSettingsPatch(
+  current: AppSettings,
   patch: Partial<AppSettings>,
-): Promise<AppSettings> {
-  if (!hasSupabase()) return local.updateSettings(patch);
-  const current = await getSettings();
-  const next: AppSettings = {
+): AppSettings {
+  return {
     ...current,
     ...patch,
     cronControl: { ...current.cronControl, ...(patch.cronControl || {}) },
@@ -141,9 +144,56 @@ export async function updateSettings(
       ...(patch.kanbanColumnOrder || {}),
     },
   };
+}
+
+/**
+ * Read-modify-write on the single shared settings row, guarded by a
+ * compare-and-swap on the previous payload. Cron ticks, the auto-learned
+ * Google Voice reply address, and the Settings page all call this
+ * concurrently on the same row — without the CAS, whichever write lands
+ * last wins outright and silently reverts every field the other write had
+ * just changed (this is what caused the morning briefing to re-send and
+ * googleVoiceReply/cronControl to randomly revert to defaults).
+ */
+export async function updateSettings(
+  patch: Partial<AppSettings>,
+): Promise<AppSettings> {
+  if (!hasSupabase()) return local.updateSettings(patch);
   const sb = client();
-  await sb.from("app_settings").upsert({ id: 1, payload: next });
-  return next;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const { data, error } = await sb
+      .from("app_settings")
+      .select("payload")
+      .eq("id", 1)
+      .maybeSingle();
+    if (error) throw error;
+    const current = normalizeSettings(
+      (data?.payload as Partial<AppSettings>) ?? null,
+    );
+    const next = mergeSettingsPatch(current, patch);
+
+    if (!data) {
+      const { error: insertErr } = await sb
+        .from("app_settings")
+        .insert({ id: 1, payload: next });
+      if (!insertErr) return next;
+      continue; // someone else inserted first — retry as an update
+    }
+
+    const { data: written, error: writeErr } = await sb
+      .from("app_settings")
+      .update({ payload: next })
+      .eq("id", 1)
+      // Compare-and-swap: only applies if nobody else wrote since our read.
+      // PostgREST needs the jsonb value as a string here (an object fails
+      // with "invalid input syntax for type json").
+      .eq("payload", JSON.stringify(data.payload))
+      .select("payload");
+    if (writeErr) throw writeErr;
+    if (written && written.length > 0) return next;
+    // Row changed between our read and write — retry from a fresh read.
+  }
+  throw new Error("updateSettings: too many concurrent write conflicts");
 }
 
 export async function getListItems(listName?: string): Promise<ListItem[]> {

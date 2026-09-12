@@ -354,10 +354,16 @@ let handledLabelIdCache: string | null = null;
 /** Find a recent GV SMS thread so proactive texts (briefing/reminders) deliver as SMS. */
 async function findLatestVoiceThread(preferredTo?: string): Promise<VoiceThread | null> {
   const service = gmail();
-  const phoneDigits = getPhoneDigitsFromEnv();
+  // No digits filter here: Gmail tokenizes a GV subject's phone number as
+  // "(248) 667-5992" (separate word tokens), so a bare 10-digit run like
+  // "2486675992" never matches and this always came back empty — every
+  // proactive send (briefing/reminders) silently fell back to the raw
+  // PHONE_EMAIL carrier gateway instead of replying in the GV thread.
+  // `from:txt.voice.google.com` alone is already scoped to this one
+  // assistant's single GV number.
   const res = await service.users.threads.list({
     userId: "me",
-    q: `from:txt.voice.google.com ${phoneDigits} newer_than:30d`,
+    q: `from:txt.voice.google.com newer_than:30d`,
     maxResults: 15,
   });
   const preferred = preferredTo
