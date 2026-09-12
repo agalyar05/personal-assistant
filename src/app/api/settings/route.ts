@@ -66,8 +66,14 @@ export async function PUT(req: Request) {
     endLive?: boolean;
     kanbanColumnOrder?: Record<string, string[]>;
   };
-  const current = await db.getSettings();
-  let cronControl = { ...current.cronControl, ...(body.cronControl || {}) };
+  // Only ever include fields the caller actually sent — db.updateSettings()
+  // merges a patch onto a freshly-read row (with a compare-and-swap retry
+  // when another write lands first), so defaulting untouched fields to a
+  // `current` snapshot read here would re-introduce the exact lost-update
+  // race that used to let one save silently revert another's changes.
+  let cronControl: Partial<CronControlSettings> | undefined = body.cronControl
+    ? { ...body.cronControl }
+    : undefined;
   if (body.liveHours && body.liveHours > 0) {
     cronControl = {
       ...cronControl,
@@ -78,39 +84,31 @@ export async function PUT(req: Request) {
     cronControl = { ...cronControl, liveUntil: null };
   }
 
-  let dashboardLayout = body.dashboardLayout ?? current.dashboardLayout;
-  if (body.dashboardLayout) {
-    dashboardLayout =
-      slimDashboardLayout(body.dashboardLayout) ?? body.dashboardLayout;
-  }
-
-  const patch: Parameters<typeof db.updateSettings>[0] = { cronControl };
+  const patch: Parameters<typeof db.updateSettings>[0] = {};
+  // db.updateSettings() only ever spreads cronControl onto a fresh current
+  // value, so a partial object is safe here despite the full-shape type.
+  if (cronControl) patch.cronControl = cronControl as CronControlSettings;
   if (body.timezone !== undefined) patch.timezone = body.timezone;
-  else patch.timezone = current.timezone;
   if (body.weatherCity !== undefined) patch.weatherCity = body.weatherCity;
-  else patch.weatherCity = current.weatherCity;
   if (body.morningBriefingTime !== undefined) {
     patch.morningBriefingTime = body.morningBriefingTime;
-  } else patch.morningBriefingTime = current.morningBriefingTime;
+  }
   if (body.weeklyBriefingDay !== undefined) {
     patch.weeklyBriefingDay = body.weeklyBriefingDay;
-  } else patch.weeklyBriefingDay = current.weeklyBriefingDay;
+  }
   if (body.weeklyBriefingTime !== undefined) {
     patch.weeklyBriefingTime = body.weeklyBriefingTime;
-  } else patch.weeklyBriefingTime = current.weeklyBriefingTime;
+  }
   if (body.uiTheme !== undefined) patch.uiTheme = body.uiTheme;
-  else patch.uiTheme = current.uiTheme;
-  if (body.dashboardLayout !== undefined) patch.dashboardLayout = dashboardLayout;
-  else patch.dashboardLayout = current.dashboardLayout;
+  if (body.dashboardLayout !== undefined) {
+    patch.dashboardLayout =
+      slimDashboardLayout(body.dashboardLayout) ?? body.dashboardLayout;
+  }
   if (body.taskHorizonDays !== undefined) {
     patch.taskHorizonDays = Math.max(0, Math.min(365, Number(body.taskHorizonDays) || 0));
-  } else {
-    patch.taskHorizonDays = current.taskHorizonDays;
   }
   if (body.dueSoonBoldDays !== undefined) {
     patch.dueSoonBoldDays = Math.max(0, Math.min(365, Number(body.dueSoonBoldDays) || 0));
-  } else {
-    patch.dueSoonBoldDays = current.dueSoonBoldDays;
   }
   if (body.kanbanColumnOrder !== undefined) {
     patch.kanbanColumnOrder = body.kanbanColumnOrder;
