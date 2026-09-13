@@ -60,7 +60,12 @@ export async function getCronControl(): Promise<CronControlSettings> {
     .select("payload->cronControl")
     .eq("id", 1)
     .maybeSingle();
-  if (error || !data) return DEFAULT_SETTINGS.cronControl;
+  // A real query error is not the same as "no row yet" — silently falling
+  // back to defaults here made a transient Supabase hiccup look identical
+  // to a freshly-configured cron (mode "always"-ish, full day/week window),
+  // which is how a manually-paused cron ("off") kept firing anyway.
+  if (error) throw error;
+  if (!data) return DEFAULT_SETTINGS.cronControl;
   const raw = (data as { cronControl?: Partial<CronControlSettings> })
     .cronControl;
   return { ...DEFAULT_SETTINGS.cronControl, ...(raw || {}) };
@@ -117,7 +122,14 @@ export async function getSettings(): Promise<AppSettings> {
   if (!hasSupabase()) return local.getSettings();
   const sb = client();
   const { data, error } = await sb.from("app_settings").select("*").eq("id", 1).maybeSingle();
-  if (error || !data) return DEFAULT_SETTINGS;
+  // Same reasoning as getCronControl: a real error must not be silently
+  // treated as "use DEFAULT_SETTINGS" — that made maybeMorningBriefing()
+  // see lastMorningBriefing as unset (never sent) and googleVoiceReply as
+  // null on every transient read failure, which is exactly what caused
+  // repeat sends through the day and settings fields flipping back to
+  // their defaults (weatherCity "Detroit", timezone "America/Detroit").
+  if (error) throw error;
+  if (!data) return DEFAULT_SETTINGS;
   return normalizeSettings(data.payload as Partial<AppSettings>);
 }
 
