@@ -421,19 +421,23 @@ async function resolveVoiceThread(preferredTo?: string): Promise<VoiceThread | n
   return thread;
 }
 
+/**
+ * Never falls back to the raw carrier email-to-SMS gateway (PHONE_EMAIL) —
+ * that pathway is unreliable (delayed/duplicate/out-of-order delivery) and
+ * the user explicitly does not want anything sent through it. If no Google
+ * Voice thread or address can be resolved, this throws so the caller skips
+ * the send entirely rather than silently degrading to that gateway.
+ */
 async function resolveSmsDestination(): Promise<{
   to: string;
   thread: VoiceThread | null;
 }> {
   const { getSettings, updateSettings } = await import("../db");
   const settings = await getSettings();
-  let to =
+  const to =
     process.env.GOOGLE_VOICE_REPLY_EMAIL?.trim() ||
     settings.googleVoiceReply ||
     "";
-  if (!to) {
-    to = getPhoneEmail();
-  }
   if (
     process.env.GOOGLE_VOICE_REPLY_EMAIL?.trim() &&
     settings.googleVoiceReply !== process.env.GOOGLE_VOICE_REPLY_EMAIL.trim()
@@ -443,9 +447,14 @@ async function resolveSmsDestination(): Promise<{
     });
   }
 
-  const thread = await resolveVoiceThread(to);
+  const thread = await resolveVoiceThread(to || undefined);
   if (thread && settings.googleVoiceReply !== thread.to) {
     await updateSettings({ googleVoiceReply: thread.to });
+  }
+  if (!thread && !to) {
+    throw new Error(
+      "No Google Voice thread or reply address found — refusing to fall back to PHONE_EMAIL.",
+    );
   }
   return { to, thread };
 }
