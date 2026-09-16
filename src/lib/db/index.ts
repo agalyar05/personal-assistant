@@ -595,7 +595,12 @@ function rowToAssignment(row: Record<string, unknown>): Assignment {
 export async function getCourses(): Promise<Course[]> {
   if (!hasSupabase()) return local.getCourses();
   const sb = client();
-  const { data } = await sb.from("courses").select("*").order("sort_order");
+  const { data, error } = await sb.from("courses").select("*").order("sort_order");
+  // A real query error must not be treated as "there are zero courses" —
+  // that's what let ensureApplicationsGroupAmong() below insert a fresh
+  // Applications group on every transient read failure, producing several
+  // duplicate "Applications" rows that the app then refuses to delete.
+  if (error) throw error;
   let courses = (data || []).map((r) => rowToCourse(r as Record<string, unknown>));
   courses = await ensureApplicationsGroupAmong(courses);
   return courses;
@@ -655,8 +660,12 @@ export async function deleteCourse(id: string): Promise<void> {
   if (!hasSupabase()) return local.deleteCourse(id);
   const courses = await getCourses();
   const target = courses.find((c) => c.id === id);
-  if (target) {
-    if (isApplicationsGroup(target)) {
+  if (target && isApplicationsGroup(target)) {
+    // Block deleting the last one (the app relies on it always existing),
+    // but a stale read-error retry could have created duplicate rows — those
+    // are safe to remove.
+    const applicationsGroups = courses.filter(isApplicationsGroup);
+    if (applicationsGroups.length <= 1) {
       throw new Error("Cannot delete the Applications group");
     }
   }
